@@ -815,8 +815,10 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
     if (_appEnSegundoPlano || !mounted) return;
     try {
       final connectivity = await Connectivity().checkConnectivity();
-      if (connectivity.isEmpty || connectivity.first == ConnectivityResult.none)
+      if (connectivity.isEmpty ||
+          connectivity.first == ConnectivityResult.none) {
         return;
+      }
       final mapa = await fetchTarjetasTiempo(
         token: _token,
       ).timeout(const Duration(seconds: 10));

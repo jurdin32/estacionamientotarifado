@@ -112,8 +112,9 @@ class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
           final lista = data.whereType<Map<String, dynamic>>().toList();
           if (mounted) setState(() => _todas = lista);
         } else {
-          if (mounted)
+          if (mounted) {
             setState(() => _errorMessage = 'Formato de respuesta inesperado.');
+          }
         }
       } else {
         if (mounted) {
@@ -124,12 +125,13 @@ class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
         }
       }
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         setState(
           () => _errorMessage = e is TimeoutException
               ? 'La conexión tardó demasiado. Verifica tu red e intenta de nuevo.'
               : 'Error de red: $e',
         );
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -1940,8 +1942,9 @@ class _FormBeneficiarioState extends State<_FormBeneficiario> {
                                   ),
                                 ),
                                 validator: (v) {
-                                  if (v == null || v.trim().isEmpty)
+                                  if (v == null || v.trim().isEmpty) {
                                     return 'Campo requerido';
+                                  }
                                   final placa = v.trim().toUpperCase();
                                   // ABC1234 (3 letras + 4 dígitos)
                                   // AB123C  (2 letras + 3 dígitos + 1 letra)
@@ -2140,8 +2143,9 @@ class _FormBeneficiarioState extends State<_FormBeneficiario> {
                                 extraValidator: (v) {
                                   if (v == null || v.isEmpty) return null;
                                   if (!v.startsWith('09') &&
-                                      !v.startsWith('07'))
+                                      !v.startsWith('07')) {
                                     return 'Iniciar con 09/07';
+                                  }
                                   if (v.length != 10) return '10 dígitos';
                                   return null;
                                 },
@@ -2166,8 +2170,9 @@ class _FormBeneficiarioState extends State<_FormBeneficiario> {
                             extraValidator: (v) {
                               if (v == null || v.isEmpty) return null;
                               final n = int.tryParse(v);
-                              if (n == null || n < 1 || n > 100)
+                              if (n == null || n < 1 || n > 100) {
                                 return '1 – 100';
+                              }
                               return null;
                             },
                           ),
@@ -2700,8 +2705,9 @@ class _FormBeneficiarioState extends State<_FormBeneficiario> {
           ),
         ),
         validator: (v) {
-          if (required && (v == null || v.trim().isEmpty))
+          if (required && (v == null || v.trim().isEmpty)) {
             return 'Campo requerido';
+          }
           if (extraValidator != null) return extraValidator(v);
           return null;
         },
@@ -2720,7 +2726,7 @@ class _FormBeneficiarioState extends State<_FormBeneficiario> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: DropdownButtonFormField<String>(
-        value: opciones.contains(value) ? value : opciones.first,
+        initialValue: opciones.contains(value) ? value : opciones.first,
         decoration: InputDecoration(
           labelText: required ? '$label *' : label,
           prefixIcon: Icon(icon, color: _accent, size: 18),
