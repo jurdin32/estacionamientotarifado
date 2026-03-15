@@ -1,0 +1,6 @@
+# Copia este archivo como ONESIGNAL.txt y rellena con tus credenciales reales.
+# ONESIGNAL.txt está en .gitignore — nunca lo subas al repositorio.
+
+ID:<TU_APP_ID_DE_ONESIGNAL>
+
+API REST: <TU_REST_API_KEY_DE_ONESIGNAL>

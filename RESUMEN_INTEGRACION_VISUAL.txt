@@ -1,0 +1,274 @@
+╔════════════════════════════════════════════════════════════════════════════╗
+║                                                                            ║
+║         ✅ IMPRESORA BLUETOOTH INTEGRADA EN NotificacionScreen.dart        ║
+║                                                                            ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+🎯 RESUMEN DE CAMBIOS
+═══════════════════════════════════════════════════════════════════════════
+
+📦 IMPORTES AGREGADOS (línea 10-11)
+  ├─ gestorImpresora.dart
+  └─ WidgetsImpresora.dart
+
+🔧 VARIABLE AGREGADA (línea 25)
+  └─ final GestorImpresora _gestorImpresora = GestorImpresora();
+
+🎨 UI MODIFICADA
+
+  1. AppBar (línea ~957)
+     ├─ Agregado: actions: [EstadoImpresoraCompacto(...)]
+     └─ Muestra: Conectada/Desconectada en la esquina superior derecha
+
+  2. Scaffold (línea ~948)
+     ├─ Agregado: floatingActionButton: FloatingImpresoraButton(...)
+     └─ Función: Botón verde con indicador, acceso a configuración
+
+  3. Botones (método _buildBotonGuardar)
+     ├─ Nuevo: Botón "IMPRIMIR TICKET" (azul)
+     │   └─ Aparece solo si: impresora conectada + formulario válido
+     └─ Original: Botón "GUARDAR MULTA" (verde)
+
+⚙️ FUNCIONES NUEVAS
+
+  _imprimirMulta() (línea ~1944)
+    ├─ Lee datos del formulario
+    ├─ Abre diálogo de confirmación
+    ├─ Imprime el ticket
+    └─ Muestra notificación de éxito
+
+═══════════════════════════════════════════════════════════════════════════
+
+📱 FLUJO DEL USUARIO
+═══════════════════════════════════════════════════════════════════════════
+
+1. ABRE NotificacionScreen
+   │
+   ├─ Ve indicador en AppBar
+   │  ├─ VERDE: Impresora conectada ✅
+   │  └─ GRIS: Impresora no conectada ❌
+   │
+   └─ Ve botón flotante
+      ├─ VERDE: Impresora conectada ✅
+      └─ GRIS: Impresora no conectada ❌
+
+2. CONFIGURA IMPRESORA (opcional)
+   │
+   ├─ Presiona indicador en AppBar O botón flotante
+   ├─ Se abre pantalla de configuración
+   ├─ Escanea impresoras disponibles
+   ├─ Selecciona su impresora
+   └─ Se conecta automáticamente
+
+3. COMPLETA EL FORMULARIO
+   │
+   ├─ Placa: ABC-1234 ✓
+   ├─ Multa: Selecciona tipo ✓
+   ├─ Comprobante: 12345678 ✓
+   ├─ Fecha: Hoy a las 14:30 ✓
+   ├─ Ubicación: Calle Principal 123 ✓
+   ├─ Observación: Vehículo estacionado... ✓ (mín 10 caracteres)
+   └─ Fotos: Selecciona 3 evidencias ✓
+
+4. VE BOTÓN "IMPRIMIR TICKET"
+   │
+   ├─ Aparece: Solo si impresora está CONECTADA
+   ├─ Color: Azul
+   └─ Ubicación: Encima del botón "Guardar"
+
+5. PRESIONA "IMPRIMIR TICKET"
+   │
+   ├─ Abre diálogo de confirmación
+   │  └─ Muestra resumen: Placa, tipo, valor, ubicación
+   ├─ Selecciona "Imprimir"
+   ├─ La impresora imprime el ticket
+   └─ Recibe notificación de éxito
+
+6. PRESIONA "GUARDAR MULTA"
+   │
+   ├─ Se guarda en la base de datos
+   ├─ Se suben las 3 fotos al servidor
+   ├─ Muestra diálogo de éxito
+   └─ Se limpia el formulario
+
+═══════════════════════════════════════════════════════════════════════════
+
+✨ CARACTERÍSTICAS NUEVAS
+═══════════════════════════════════════════════════════════════════════════
+
+✅ INDICADOR DE ESTADO
+   ├─ Visible en AppBar
+   ├─ Muestra: "Conectada" o "Desconectada"
+   ├─ Color: Verde si conectada, gris si no
+   └─ Clic: Abre configuración de impresora
+
+✅ BOTÓN FLOTANTE
+   ├─ Visible siempre
+   ├─ Indicador visual: Puntito verde si conectada
+   ├─ Color: Verde si conectada, gris si no
+   └─ Clic: Abre configuración de impresora
+
+✅ BOTÓN "IMPRIMIR TICKET"
+   ├─ Aparece: Solo si formulario válido + impresora conectada
+   ├─ Color: Azul (diferente del guardar)
+   ├─ Ícono: Impresora
+   ├─ Datos: Usa toda la información del formulario
+   └─ Comportamiento: Abre confirmación antes de imprimir
+
+✅ INTEGRACIÓN DE DATOS
+   ├─ Placa: De _placaController
+   ├─ Tipo multa: De multaSeleccionada
+   ├─ Valor: De multaSeleccionada.valor
+   ├─ Fecha: De _fechaEmisionController
+   ├─ Ubicación: De _ubicacionController
+   ├─ Comprobante: De _numeroComprobanteController
+   ├─ Observación: De _observacionController
+   └─ Usuario: Del nombre del operador logueado
+
+═══════════════════════════════════════════════════════════════════════════
+
+📊 UBICACIÓN DE CAMBIOS EN EL CÓDIGO
+═══════════════════════════════════════════════════════════════════════════
+
+Línea 1-11:    IMPORTES
+               ├─ +import 'gestorImpresora.dart'
+               └─ +import 'WidgetsImpresora.dart'
+
+Línea 25:      VARIABLES DE CLASE
+               └─ +final GestorImpresora _gestorImpresora
+
+Línea ~948:    MÉTODO build()
+               ├─ appBar.actions: +EstadoImpresoraCompacto
+               └─ floatingActionButton: +FloatingImpresoraButton
+
+Línea ~1830:   MÉTODO _buildBotonGuardar()
+               ├─ +Condicional: if (_gestorImpresora.estaConectada)
+               ├─ +Botón: "IMPRIMIR TICKET"
+               └─ Original: "GUARDAR MULTA" (sin cambios)
+
+Línea ~1944:   MÉTODO _imprimirMulta() [NUEVO]
+               ├─ Lee datos del formulario
+               ├─ Llama a _gestorImpresora.imprimirMultaConDialogo()
+               └─ Muestra notificación
+
+═══════════════════════════════════════════════════════════════════════════
+
+🔒 VALIDACIONES
+═══════════════════════════════════════════════════════════════════════════
+
+El botón "IMPRIMIR TICKET" aparece SOLO SI:
+
+  ✓ _gestorImpresora.estaConectada == true
+    └─ Es decir, hay una impresora Bluetooth conectada
+
+  Y
+
+  ✓ formularioCompleto == true
+    ├─ Placa válida (ABC-1234 o AB-123C)
+    ├─ Multa seleccionada
+    ├─ Comprobante: 2-8 dígitos
+    ├─ Fecha: no puede ser futura
+    ├─ Ubicación: mínimo 3 caracteres
+    ├─ Observación: mínimo 10 caracteres
+    └─ Fotos: exactamente 3
+
+═══════════════════════════════════════════════════════════════════════════
+
+🎨 COLORES UTILIZADOS
+═══════════════════════════════════════════════════════════════════════════
+
+AppBar Indicador:
+  ├─ Conectada: Colors.green
+  ├─ Desconectada: Colors.red
+  └─ Fondo: Oscuro
+
+Botón Imprimir:
+  ├─ Color: Colors.blue[600]
+  ├─ Ícono: Icons.print
+  └─ Tamaño: 50px altura
+
+Botón Guardar (sin cambios):
+  ├─ Color: _colorPrimario (verde)
+  ├─ Ícono: Icons.save_alt
+  └─ Tamaño: 60px altura
+
+═══════════════════════════════════════════════════════════════════════════
+
+📝 NOTA IMPORTANTE
+═══════════════════════════════════════════════════════════════════════════
+
+El botón "IMPRIMIR TICKET" es COMPLEMENTARIO, no OBLIGATORIO:
+
+  ✓ Puedes GUARDAR sin IMPRIMIR
+  ✓ Puedes IMPRIMIR sin GUARDAR
+  ✓ Son acciones INDEPENDIENTES
+  ✓ El flujo de guardado NO cambió
+
+Las multas se guardan igual, con o sin impresora conectada.
+
+═══════════════════════════════════════════════════════════════════════════
+
+🚀 ¿CÓMO USAR?
+═══════════════════════════════════════════════════════════════════════════
+
+1. Empareja tu impresora
+   └─ Configuración > Bluetooth > Emparejar
+
+2. Abre NotificacionScreen
+   └─ Verás indicador en AppBar
+
+3. Completa el formulario
+   └─ Verás botón "IMPRIMIR TICKET" cuando todo sea válido
+
+4. Elige:
+   ├─ OPCIÓN A: Presiona "IMPRIMIR TICKET" → Imprime → Presiona "GUARDAR"
+   ├─ OPCIÓN B: Presiona "GUARDAR" → Se guarda → Sin imprimir
+   └─ OPCIÓN C: Presiona "IMPRIMIR" → Luego "GUARDAR" → Se imprime y guarda
+
+═══════════════════════════════════════════════════════════════════════════
+
+✅ TESTING RECOMENDADO
+═══════════════════════════════════════════════════════════════════════════
+
+1. Sin impresora conectada:
+   ├─ Indicador: GRIS
+   ├─ Botón flotante: GRIS
+   └─ Botón "IMPRIMIR": NO APARECE
+
+2. Con impresora conectada:
+   ├─ Indicador: VERDE
+   ├─ Botón flotante: VERDE
+   ├─ Formulario incompleto: Botón "IMPRIMIR": DESHABILITADO
+   └─ Formulario completo: Botón "IMPRIMIR": AZUL y HABILITADO
+
+3. Al presionar "IMPRIMIR":
+   ├─ Abre diálogo de confirmación
+   ├─ Muestra datos a imprimir
+   ├─ Al confirmar: imprime
+   └─ Muestra notificación de éxito
+
+4. Al presionar "GUARDAR":
+   ├─ Funciona igual que antes
+   ├─ Guarda en BD
+   ├─ Sube evidencias
+   └─ Muestra éxito
+
+═══════════════════════════════════════════════════════════════════════════
+
+🎉 ¡INTEGRACIÓN COMPLETADA!
+═══════════════════════════════════════════════════════════════════════════
+
+Tu archivo NotificacionScreen.dart está 100% funcional con:
+
+  ✅ Indicador de estado de impresora
+  ✅ Botón flotante para configuración
+  ✅ Botón "Imprimir Ticket" dinámico
+  ✅ Integración completa de datos
+  ✅ Diálogos y notificaciones
+  ✅ Validaciones inteligentes
+
+Todo está listo para IMPRIMIR directamente desde el formulario de multas.
+
+═══════════════════════════════════════════════════════════════════════════
+
+Ver: INTEGRACION_NOTIFICACIONSCREEN.md para más detalles técnicos
