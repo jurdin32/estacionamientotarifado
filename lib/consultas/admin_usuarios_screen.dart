@@ -1,6 +1,6 @@
 import 'package:estacionamientotarifado/servicios/servicioPermisos.dart';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+import 'package:estacionamientotarifado/servicios/httpMonitorizado.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -31,9 +31,10 @@ class AdminUsuariosScreen extends StatefulWidget {
         if (token.isNotEmpty) 'Authorization': 'Token ${token.trim()}',
         if (sessionCookie.isNotEmpty) 'Cookie': sessionCookie,
       };
-      final response = await http
-          .get(uri, headers: headers)
-          .timeout(const Duration(seconds: 30));
+      final response = await HttpMonitorizado.get(
+        uri,
+        headers: headers,
+      ).timeout(const Duration(seconds: 30));
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         List<Map<String, dynamic>> lista = [];
@@ -64,8 +65,8 @@ class AdminUsuariosScreen extends StatefulWidget {
 }
 
 class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
-  static const Color _colorPrimario = Color(0xFF001F54);
-  static const Color _colorSecundario = Color(0xFF5E17EB);
+  static const Color _colorPrimario = Color(0xFF0A1628);
+  static const Color _colorSecundario = Color(0xFF1565C0);
   static const Color _colorFondo = Color(0xFFF0F4FF);
   static const Color _colorSubtexto = Color(0xFF555555);
 
@@ -191,9 +192,10 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
       );
 
       final uri = _uriConToken('/api/gestion-usuarios/');
-      final response = await http
-          .get(uri, headers: _buildHeaders())
-          .timeout(const Duration(seconds: 30));
+      final response = await HttpMonitorizado.get(
+        uri,
+        headers: _buildHeaders(),
+      ).timeout(const Duration(seconds: 30));
       debugPrint('[AdminUsuarios] headers enviados: ${_buildHeaders()}');
       debugPrint(
         '[AdminUsuarios] status=${response.statusCode} body=${response.body.substring(0, response.body.length.clamp(0, 200))}',
@@ -311,7 +313,7 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
     setState(() => _toggling.add(userId));
     try {
       final uri = _uriConToken('/api/gestion-usuarios/$userId/');
-      final response = await http.patch(
+      final response = await HttpMonitorizado.patch(
         uri,
         headers: _buildHeaders(),
         body: json.encode({'is_active': nuevoValor}),
@@ -417,7 +419,7 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
     setState(() => _toggling.add(userId));
     try {
       final uri = _uriConToken('/api/gestion-usuarios/$userId/');
-      final response = await http.patch(
+      final response = await HttpMonitorizado.patch(
         uri,
         headers: _buildHeaders(),
         body: json.encode({'is_superuser': nuevoAdmin, 'is_staff': nuevoAdmin}),
@@ -578,7 +580,7 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
                       padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
                       decoration: const BoxDecoration(
                         gradient: LinearGradient(
-                          colors: [Color(0xFF001F54), Color(0xFF5E17EB)],
+                          colors: [Color(0xFF0A1628), Color(0xFF000000)],
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,
                         ),
@@ -939,7 +941,7 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
     setState(() => _isLoading = true);
     try {
       final uri = _uriConToken('/api/gestion-usuarios/');
-      final response = await http.post(
+      final response = await HttpMonitorizado.post(
         uri,
         headers: _buildHeaders(),
         body: json.encode({
@@ -1092,7 +1094,7 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
     setState(() => _toggling.add(uid));
     try {
       final uri = _uriConToken('/api/gestion-usuarios/$uid/');
-      final response = await http.patch(
+      final response = await HttpMonitorizado.patch(
         uri,
         headers: _buildHeaders(),
         body: json.encode(body),
@@ -1183,7 +1185,10 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
     setState(() => _toggling.add(userId));
     try {
       final uri = _uriConToken('/api/gestion-usuarios/$userId/');
-      final response = await http.delete(uri, headers: _buildHeaders());
+      final response = await HttpMonitorizado.delete(
+        uri,
+        headers: _buildHeaders(),
+      );
       if (response.statusCode == 204 || response.statusCode == 200) {
         _usuarios.removeWhere((u) => (u['id'] as int?) == userId);
         _filtrados.removeWhere((u) => (u['id'] as int?) == userId);
@@ -1273,9 +1278,11 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
     // (incluye Cookie de sesión) en lugar de PermissionsService que no la lleva.
     try {
       final uri = _uriConToken('/api/permisos-usuario/$userId/');
-      final response = await http
-          .patch(uri, headers: _buildHeaders(), body: json.encode(permisos))
-          .timeout(const Duration(seconds: 8));
+      final response = await HttpMonitorizado.patch(
+        uri,
+        headers: _buildHeaders(),
+        body: json.encode(permisos),
+      ).timeout(const Duration(seconds: 8));
       debugPrint(
         '[Permisos] PATCH $userId status=${response.statusCode} body=${response.body}',
       );
@@ -1308,9 +1315,11 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
     _permisosCache[userId] = permisos;
     try {
       final uri = _uriConToken('/api/permisos-usuario/$userId/');
-      final response = await http
-          .patch(uri, headers: _buildHeaders(), body: json.encode(permisos))
-          .timeout(const Duration(seconds: 8));
+      final response = await HttpMonitorizado.patch(
+        uri,
+        headers: _buildHeaders(),
+        body: json.encode(permisos),
+      ).timeout(const Duration(seconds: 8));
       debugPrint(
         '[Permisos] PATCH masivo $userId status=${response.statusCode}',
       );
@@ -1368,7 +1377,7 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
                       padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
                       decoration: const BoxDecoration(
                         gradient: LinearGradient(
-                          colors: [Color(0xFF001F54), Color(0xFF5E17EB)],
+                          colors: [Color(0xFF0A1628), Color(0xFF000000)],
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,
                         ),
@@ -1611,7 +1620,7 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
                                         Icon(
                                           Icons.manage_accounts_rounded,
                                           size: 16,
-                                          color: Color(0xFF001F54),
+                                          color: Color(0xFF0A1628),
                                         ),
                                         SizedBox(width: 6),
                                         Text(
@@ -1619,7 +1628,7 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
                                           style: TextStyle(
                                             fontWeight: FontWeight.w600,
                                             fontSize: 13,
-                                            color: Color(0xFF001F54),
+                                            color: Color(0xFF0A1628),
                                           ),
                                         ),
                                       ],
@@ -1748,7 +1757,7 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Material(
         color: activo
-            ? const Color(0xFF5E17EB).withValues(alpha: 0.06)
+            ? const Color(0xFF1565C0).withValues(alpha: 0.06)
             : Colors.grey.shade50,
         borderRadius: BorderRadius.circular(12),
         child: Padding(
@@ -1760,14 +1769,14 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
                 height: 40,
                 decoration: BoxDecoration(
                   color: activo
-                      ? const Color(0xFF5E17EB).withValues(alpha: 0.12)
+                      ? const Color(0xFF1565C0).withValues(alpha: 0.12)
                       : Colors.grey.shade200,
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Icon(
                   _iconForKey(key),
                   color: activo
-                      ? const Color(0xFF5E17EB)
+                      ? const Color(0xFF1565C0)
                       : Colors.grey.shade400,
                   size: 20,
                 ),
@@ -1783,7 +1792,7 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
                         fontWeight: FontWeight.w600,
                         fontSize: 13,
                         color: activo
-                            ? const Color(0xFF001F54)
+                            ? const Color(0xFF0A1628)
                             : Colors.grey.shade500,
                       ),
                     ),
@@ -1801,7 +1810,7 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
               Switch(
                 value: activo,
                 onChanged: onChanged,
-                activeThumbColor: const Color(0xFF5E17EB),
+                activeThumbColor: const Color(0xFF1565C0),
               ),
             ],
           ),
@@ -2039,7 +2048,7 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
                     backgroundColor: isActivo
                         ? (isSuperuser
                               ? Colors.amber.shade100
-                              : const Color(0xFF5E17EB).withValues(alpha: 0.12))
+                              : const Color(0xFF1565C0).withValues(alpha: 0.12))
                         : Colors.grey.shade200,
                     child: Text(
                       nombre.isNotEmpty ? nombre[0].toUpperCase() : 'U',
@@ -2049,7 +2058,7 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
                         color: isActivo
                             ? (isSuperuser
                                   ? Colors.amber.shade700
-                                  : const Color(0xFF5E17EB))
+                                  : const Color(0xFF1565C0))
                             : Colors.grey.shade400,
                       ),
                     ),
@@ -2090,7 +2099,7 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
                               fontWeight: FontWeight.bold,
                               fontSize: 14,
                               color: isActivo
-                                  ? const Color(0xFF001F54)
+                                  ? const Color(0xFF0A1628)
                                   : Colors.grey.shade500,
                             ),
                             overflow: TextOverflow.ellipsis,
@@ -2186,7 +2195,7 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
                                           ? Colors.green.shade600
                                           : activos == 0
                                           ? Colors.red.shade400
-                                          : const Color(0xFF5E17EB),
+                                          : const Color(0xFF1565C0),
                                       minHeight: 5,
                                     ),
                                   ),
@@ -2262,11 +2271,77 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
     );
   }
 
+  void _mostrarInfo(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Color(0xFF0A1628), Color(0xFF000000)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.info_outline, color: Colors.white, size: 24),
+                  SizedBox(width: 10),
+                  Text(
+                    'Información',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Administración de Accesos',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Permite gestionar usuarios, asignar permisos y controlar el acceso a la aplicación.',
+                    style: TextStyle(color: Colors.grey[700], fontSize: 14),
+                  ),
+                  const SizedBox(height: 20),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Entendido'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _colorFondo,
       appBar: AppBar(
+        centerTitle: true,
         foregroundColor: Colors.white,
         elevation: 0,
         title: const Text(
@@ -2276,13 +2351,18 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
         flexibleSpace: Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(
-              colors: [_colorPrimario, _colorSecundario],
+              colors: [Color(0xFF0A1628), Color(0xFF000000)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
           ),
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.info_outline),
+            tooltip: 'Información',
+            onPressed: () => _mostrarInfo(context),
+          ),
           IconButton(
             icon: const Icon(Icons.refresh_rounded),
             tooltip: 'Actualizar',
@@ -2292,38 +2372,75 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
       ),
       body: Column(
         children: [
-          // ── Buscador ──────────────────────────────────────────────────
+          // ── Banda SIMERT ────────────────────────────────────────────
           Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
             decoration: const BoxDecoration(
               gradient: LinearGradient(
-                colors: [_colorPrimario, _colorSecundario],
+                colors: [Color(0xFF0A1628), Color(0xFF000000)],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
             ),
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.2),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.admin_panel_settings_rounded,
+                    color: Colors.white,
+                    size: 22,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'SIMERT',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Text(
+                      'Administración de Accesos',
+                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          // ── Buscador ──────────────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.all(16),
             child: TextField(
               controller: _searchCtrl,
-              style: const TextStyle(color: Colors.white),
               decoration: InputDecoration(
                 hintText: 'Buscar usuario…',
-                hintStyle: const TextStyle(color: Colors.white60),
                 prefixIcon: const Icon(
                   Icons.search_rounded,
-                  color: Colors.white60,
+                  color: Color(0xFF0A1628),
                 ),
                 suffixIcon: _searchCtrl.text.isNotEmpty
                     ? IconButton(
-                        icon: const Icon(
-                          Icons.clear_rounded,
-                          color: Colors.white60,
-                        ),
+                        icon: Icon(Icons.clear, color: Colors.grey[500]),
                         onPressed: _searchCtrl.clear,
                       )
                     : null,
                 filled: true,
-                fillColor: Colors.white.withValues(alpha: 0.15),
-                contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                fillColor: Colors.grey.shade50,
+                contentPadding: const EdgeInsets.symmetric(
+                  vertical: 14,
+                  horizontal: 16,
+                ),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                   borderSide: BorderSide.none,

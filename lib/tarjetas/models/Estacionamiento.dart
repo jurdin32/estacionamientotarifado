@@ -23,10 +23,10 @@ class Estacionamiento {
       );
 
   Map<String, dynamic> toJson() => {
-        'id': numero,
-        'numero': numero,
-        'direccion': direccion,
-        'placa': placa,
-        'estado': estado,
-      };
+    'id': id,
+    'numero': numero,
+    'direccion': direccion,
+    'placa': placa,
+    'estado': estado,
+  };
 }

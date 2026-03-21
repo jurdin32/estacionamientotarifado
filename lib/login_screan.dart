@@ -2,7 +2,7 @@ import 'package:estacionamientotarifado/home_screen.dart';
 import 'package:estacionamientotarifado/consultas/cambiar_contrasena.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:http/http.dart' as http;
+import 'package:estacionamientotarifado/servicios/httpMonitorizado.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -55,7 +55,7 @@ class _LoginScreenState extends State<LoginScreen>
 
     try {
       // 1. Login — obtiene token y datos del usuario en una sola llamada
-      final loginResponse = await http.post(
+      final loginResponse = await HttpMonitorizado.post(
         Uri.parse('https://simert.transitoelguabo.gob.ec/api/auth/login'),
         headers: {'Content-Type': 'application/json'},
         body: json.encode({'username': usuario, 'password': password}),
@@ -270,7 +270,7 @@ class _LoginScreenState extends State<LoginScreen>
         title: const Text(
           'Recuperar contraseña',
           style: TextStyle(
-            color: Color(0xFF001F54),
+            color: Color(0xFF0A1628),
             fontWeight: FontWeight.bold,
           ),
         ),
@@ -303,7 +303,7 @@ class _LoginScreenState extends State<LoginScreen>
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF001F54),
+              backgroundColor: const Color(0xFF0A1628),
               foregroundColor: Colors.white,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(8),
@@ -327,7 +327,7 @@ class _LoginScreenState extends State<LoginScreen>
         'https://simert.transitoelguabo.gob.ec/api/auth/must_change_password',
       );
 
-      final response = await http.post(
+      final response = await HttpMonitorizado.post(
         url,
         headers: {'Content-Type': 'application/json'},
         body: json.encode({'username': username, 'password_nueva': nuevaClave}),
@@ -347,12 +347,12 @@ class _LoginScreenState extends State<LoginScreen>
             ),
             title: const Row(
               children: [
-                Icon(Icons.lock_reset_rounded, color: Color(0xFF001F54)),
+                Icon(Icons.lock_reset_rounded, color: Color(0xFF0A1628)),
                 SizedBox(width: 8),
                 Text(
                   'Contraseña temporal',
                   style: TextStyle(
-                    color: Color(0xFF001F54),
+                    color: Color(0xFF0A1628),
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -371,7 +371,7 @@ class _LoginScreenState extends State<LoginScreen>
                   decoration: BoxDecoration(
                     color: const Color(0xFFF0F4FF),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFF5E17EB)),
+                    border: Border.all(color: const Color(0xFF1565C0)),
                   ),
                   child: Text(
                     nuevaClave,
@@ -379,7 +379,7 @@ class _LoginScreenState extends State<LoginScreen>
                       fontSize: 38,
                       fontWeight: FontWeight.bold,
                       letterSpacing: 10,
-                      color: Color(0xFF001F54),
+                      color: Color(0xFF0A1628),
                     ),
                   ),
                 ),
@@ -395,7 +395,7 @@ class _LoginScreenState extends State<LoginScreen>
               ElevatedButton(
                 onPressed: () => Navigator.pop(ctx),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF001F54),
+                  backgroundColor: const Color(0xFF0A1628),
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(8),
@@ -456,7 +456,7 @@ class _LoginScreenState extends State<LoginScreen>
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
-            colors: [Color(0xFF001F54), Color(0xFF5E17EB)],
+            colors: [Color(0xFF0A1628), Color(0xFF000000)],
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
           ),

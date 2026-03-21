@@ -1,4 +1,4 @@
-﻿// pantallas/notificaciones_screen.dart
+// pantallas/notificaciones_screen.dart
 import 'dart:io';
 import 'package:estacionamientotarifado/servicios/servicioNotificaciones.dart';
 import 'package:path_provider/path_provider.dart';
@@ -70,8 +70,8 @@ class _NotificacionesscreenState extends State<Notificacionesscreen> {
   bool _subiendoEvidencias = false;
 
   // Colores coherentes con el diseño de la app
-  final Color _colorPrimario = const Color(0xFF001F54);
-  final Color _colorPurple = const Color(0xFF5E17EB);
+  final Color _colorPrimario = const Color(0xFF0A1628);
+  final Color _colorPurple = const Color(0xFF1565C0);
   final Color _colorAcento = const Color(0xFFFF9800);
   final Color _colorFondo = const Color(0xFFF0F4FF);
   final Color _colorTexto = const Color(0xFF333333);
@@ -320,6 +320,7 @@ class _NotificacionesscreenState extends State<Notificacionesscreen> {
   Future<void> _cargarMultas() async {
     setState(() => cargando = true);
 
+    // Cargar caché para mostrar rápido
     List<Multa> guardadas = await obtenerMultasGuardadas();
     if (guardadas.isNotEmpty) {
       setState(() {
@@ -329,24 +330,30 @@ class _NotificacionesscreenState extends State<Notificacionesscreen> {
         cargando = false;
       });
       _actualizarEstadoBoton();
-      return;
     }
 
+    // Siempre recargar desde API para tener IDs actualizados
     try {
       List<Multa> desdeApi = await fetchMultas();
-      await guardarMultasEnPreferencias(desdeApi);
-      setState(() {
-        multas = desdeApi;
-        if (multas.isNotEmpty) {
+      if (desdeApi.isNotEmpty) {
+        await guardarMultasEnPreferencias(desdeApi);
+        setState(() {
+          multas = desdeApi;
           multaSeleccionada = multas.first;
           _totalController.text = multaSeleccionada!.valor.toStringAsFixed(2);
-        }
-        cargando = false;
-      });
-      _actualizarEstadoBoton();
+          cargando = false;
+        });
+        _actualizarEstadoBoton();
+      } else if (guardadas.isEmpty) {
+        setState(() => cargando = false);
+        _actualizarEstadoBoton();
+      }
     } catch (e) {
-      setState(() => cargando = false);
-      _actualizarEstadoBoton();
+      // Si el API falla y no hay caché, dejar vacío
+      if (guardadas.isEmpty) {
+        setState(() => cargando = false);
+        _actualizarEstadoBoton();
+      }
     }
   }
 
@@ -1021,6 +1028,71 @@ class _NotificacionesscreenState extends State<Notificacionesscreen> {
     super.dispose();
   }
 
+  void _mostrarInfo(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Color(0xFF0A1628), Color(0xFF000000)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.info_outline, color: Colors.white, size: 24),
+                  SizedBox(width: 10),
+                  Text(
+                    'Información',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Registrar Notificación',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Permite emitir multas de tránsito, registrar infracciones y generar comprobantes de impresión.',
+                    style: TextStyle(color: Colors.grey[700], fontSize: 14),
+                  ),
+                  const SizedBox(height: 20),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Entendido'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1028,7 +1100,7 @@ class _NotificacionesscreenState extends State<Notificacionesscreen> {
       appBar: AppBar(
         foregroundColor: Colors.white,
         title: const Text(
-          "Registrar Notificación",
+          'Registrar Notificación',
           style: TextStyle(
             fontWeight: FontWeight.bold,
             fontSize: 20,
@@ -1043,11 +1115,16 @@ class _NotificacionesscreenState extends State<Notificacionesscreen> {
             gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: [Color(0xFF001F54), Color(0xFF5E17EB)],
+              colors: [Color(0xFF0A1628), Color(0xFF000000)],
             ),
           ),
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.info_outline, color: Colors.white),
+            tooltip: 'Información',
+            onPressed: () => _mostrarInfo(context),
+          ),
           // Historial / reimprimir del día
           IconButton(
             icon: const Icon(Icons.history, color: Colors.white),
@@ -1122,30 +1199,50 @@ class _NotificacionesscreenState extends State<Notificacionesscreen> {
       key: _formKey,
       child: Column(
         children: [
+          _buildHeader(),
           Expanded(
             child: SingleChildScrollView(
               controller: _scrollController,
-              padding: const EdgeInsets.all(20.0),
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
               child: Column(
                 children: [
-                  _buildHeader(),
-                  const SizedBox(height: 20),
-                  _buildCampoPlaca(),
-                  const SizedBox(height: 20),
-                  _dropdownMulta(),
-                  const SizedBox(height: 20),
-                  _buildCampoTotal(),
-                  const SizedBox(height: 20),
-                  _buildCampoNumeroComprobante(),
-                  const SizedBox(height: 20),
-                  _buildCampoFechaHora(),
-                  const SizedBox(height: 20),
-                  _buildCampoUbicacion(),
-                  const SizedBox(height: 20),
-                  _buildSeccionEvidencias(),
-                  const SizedBox(height: 20),
-                  _buildCampoObservacion(),
-                  const SizedBox(height: 40),
+                  // --- Sección: Datos del vehículo ---
+                  _buildSeccionCard(
+                    titulo: 'Datos del Vehículo',
+                    icono: Icons.directions_car_outlined,
+                    children: [
+                      _buildCampoPlaca(),
+                      const SizedBox(height: 16),
+                      _dropdownMulta(),
+                      const SizedBox(height: 16),
+                      _buildCampoTotal(),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  // --- Sección: Detalles de la multa ---
+                  _buildSeccionCard(
+                    titulo: 'Detalles de la Multa',
+                    icono: Icons.description_outlined,
+                    children: [
+                      _buildCampoNumeroComprobante(),
+                      const SizedBox(height: 16),
+                      _buildCampoFechaHora(),
+                      const SizedBox(height: 16),
+                      _buildCampoUbicacion(),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  // --- Sección: Evidencias ---
+                  _buildSeccionCard(
+                    titulo: 'Evidencias y Observaciones',
+                    icono: Icons.camera_alt_outlined,
+                    children: [
+                      _buildSeccionEvidencias(),
+                      const SizedBox(height: 16),
+                      _buildCampoObservacion(),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
                 ],
               ),
             ),
@@ -1156,133 +1253,110 @@ class _NotificacionesscreenState extends State<Notificacionesscreen> {
     );
   }
 
+  Widget _buildSeccionCard({
+    required String titulo,
+    required IconData icono,
+    required List<Widget> children,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: _colorPrimario.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(icono, size: 18, color: _colorPrimario),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                titulo,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: _colorPrimario,
+                  letterSpacing: 0.3,
+                ),
+              ),
+            ],
+          ),
+          const Divider(height: 20),
+          ...children,
+        ],
+      ),
+    );
+  }
+
   Widget _buildHeader() {
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        gradient: LinearGradient(
+        gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [_colorPrimario, _colorPurple],
+          colors: [Color(0xFF0A1628), Color(0xFF000000)],
         ),
-        borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: _colorPrimario.withValues(alpha: 0.35),
-            blurRadius: 14,
-            offset: const Offset(0, 6),
+            color: _colorPrimario.withValues(alpha: 0.25),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
           ),
         ],
       ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+        child: Row(
           children: [
-            // ── Fila 1: icono + título ──────────────────────────────────
-            Row(
-              children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.18),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.notification_add_outlined,
-                    color: Colors.white,
-                    size: 20,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                const Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'SIMERT',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 15,
-                        letterSpacing: 2,
-                      ),
-                    ),
-                    Text(
-                      'Registro de Notificaciones',
-                      style: TextStyle(
-                        color: Colors.white70,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w400,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-            // ── Fila 2: nombre del operador ─────────────────────────────
-            if (name.isNotEmpty || username.isNotEmpty) ...[
-              const SizedBox(height: 10),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.14),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.25),
-                    width: 1,
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.person_outline,
-                      color: Colors.white70,
-                      size: 14,
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        name.isNotEmpty ? name : username,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-            // ── Fila 3: aviso de campos obligatorios ────────────────────
-            const SizedBox(height: 10),
             Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              width: 38,
+              height: 38,
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.10),
-                borderRadius: BorderRadius.circular(8),
+                color: Colors.white.withValues(alpha: 0.15),
+                shape: BoxShape.circle,
               ),
-              child: const Row(
+              child: const Icon(
+                Icons.notification_add_outlined,
+                color: Colors.white,
+                size: 18,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.info_outline, color: Colors.white70, size: 14),
-                  SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      'Los campos (*) son obligatorios. Se requieren 3 evidencias fotográficas.',
-                      style: TextStyle(
-                        color: Colors.white70,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w400,
-                      ),
+                  const Text(
+                    'SIMERT',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                      letterSpacing: 2,
+                    ),
+                  ),
+                  Text(
+                    'Los campos (*) son obligatorios',
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.7),
+                      fontSize: 11,
                     ),
                   ),
                 ],
@@ -1298,16 +1372,6 @@ class _NotificacionesscreenState extends State<Notificacionesscreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          "Evidencias Fotográficas * (${_imagenesSeleccionadas.length}/3)",
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: _colorTexto,
-          ),
-        ),
-        const SizedBox(height: 8),
-
         // Botones para agregar evidencias
         Row(
           children: [
@@ -1498,91 +1562,68 @@ class _NotificacionesscreenState extends State<Notificacionesscreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          "Placa del Vehículo *",
+        TextFormField(
+          controller: _placaController,
+          focusNode: _placaFocusNode,
+          decoration: InputDecoration(
+            labelText: "Placa del vehículo *",
+            hintText: "Ej: ABC1234 o AB123C",
+            filled: true,
+            fillColor: Colors.grey.shade50,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none,
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: _colorBorde),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: _colorPrimario, width: 2),
+            ),
+            suffixIcon: _placaController.text.isNotEmpty
+                ? Container(
+                    margin: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: _placaValida
+                          ? _colorPrimario.withValues(alpha: 0.2)
+                          : Colors.red.withValues(alpha: 0.2),
+                    ),
+                    child: Icon(
+                      _placaValida ? Icons.check_circle : Icons.error,
+                      color: _placaValida ? _colorPrimario : Colors.red,
+                      size: 20,
+                    ),
+                  )
+                : null,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 16,
+            ),
+          ),
           style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
+            fontSize: 16,
             color: _colorTexto,
+            fontWeight: FontWeight.w500,
           ),
-        ),
-        const SizedBox(height: 8),
-        Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05),
-                blurRadius: 5,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: TextFormField(
-            controller: _placaController,
-            focusNode: _placaFocusNode,
-            decoration: InputDecoration(
-              labelText: "Ingrese la placa *",
-              hintText: "Ej: ABC1234 o AB123C",
-              filled: true,
-              fillColor: Colors.white,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide.none,
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: _colorBorde),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: _colorPrimario, width: 2),
-              ),
-              suffixIcon: _placaController.text.isNotEmpty
-                  ? Container(
-                      margin: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: _placaValida
-                            ? _colorPrimario.withValues(alpha: 0.2)
-                            : Colors.red.withValues(alpha: 0.2),
-                      ),
-                      child: Icon(
-                        _placaValida ? Icons.check_circle : Icons.error,
-                        color: _placaValida ? _colorPrimario : Colors.red,
-                        size: 20,
-                      ),
-                    )
-                  : null,
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 16,
-              ),
-            ),
-            style: TextStyle(
-              fontSize: 16,
-              color: _colorTexto,
-              fontWeight: FontWeight.w500,
-            ),
-            textCapitalization: TextCapitalization.characters,
-            inputFormatters: [
-              UpperCaseTextFormatter(),
-              FilteringTextInputFormatter.allow(RegExp(r'[A-Z0-9]')),
-              LengthLimitingTextInputFormatter(7),
-            ],
-            validator: (value) {
-              if (value == null || value.isEmpty) {
-                return "La placa del vehículo es requerida";
-              }
-              final placaRegex = RegExp(
-                r'^([A-Z]{3}\d{4}|[A-Z]{2}\d{3}[A-Z])$',
-              );
-              if (!placaRegex.hasMatch(value)) {
-                return "Formato inválido. Use ABC1234 o AB123C";
-              }
-              return null;
-            },
-          ),
+          textCapitalization: TextCapitalization.characters,
+          inputFormatters: [
+            UpperCaseTextFormatter(),
+            FilteringTextInputFormatter.allow(RegExp(r'[A-Z0-9]')),
+            LengthLimitingTextInputFormatter(7),
+          ],
+          validator: (value) {
+            if (value == null || value.isEmpty) {
+              return "La placa del vehículo es requerida";
+            }
+            final placaRegex = RegExp(r'^([A-Z]{3}\d{4}|[A-Z]{2}\d{3}[A-Z])$');
+            if (!placaRegex.hasMatch(value)) {
+              return "Formato inválido. Use ABC1234 o AB123C";
+            }
+            return null;
+          },
         ),
         if (_placaController.text.isNotEmpty &&
             !_placaValida &&
@@ -1607,369 +1648,230 @@ class _NotificacionesscreenState extends State<Notificacionesscreen> {
   }
 
   Widget _buildCampoNumeroComprobante() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          "Número de Comprobante *",
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: _colorTexto,
-          ),
+    return TextFormField(
+      controller: _numeroComprobanteController,
+      decoration: InputDecoration(
+        labelText: "Número de comprobante *",
+        hintText: "Ej: 12345678 (mín. 2, máx. 8 dígitos)",
+        filled: true,
+        fillColor: Colors.grey.shade50,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
         ),
-        const SizedBox(height: 8),
-        Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05),
-                blurRadius: 5,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: TextFormField(
-            controller: _numeroComprobanteController,
-            decoration: InputDecoration(
-              labelText: "Número de Comprobante *",
-              hintText: "Ej: 12345678 (mín. 2, máx. 8 dígitos)",
-              filled: true,
-              fillColor: Colors.white,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide.none,
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: _colorBorde),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: _colorPrimario, width: 2),
-              ),
-              prefixIcon: Icon(Icons.file_copy, color: _colorPrimario),
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 16,
-              ),
-            ),
-            style: TextStyle(fontSize: 16, color: _colorTexto),
-            keyboardType: TextInputType.number,
-            inputFormatters: [
-              FilteringTextInputFormatter.digitsOnly,
-              LengthLimitingTextInputFormatter(8), // Máximo 8 dígitos
-            ],
-            validator: (value) {
-              if (value == null || value.isEmpty) {
-                return "El número de comprobante es requerido";
-              }
-              if (value.length < 2) {
-                return "El comprobante debe tener al menos 2 dígitos";
-              }
-              if (value.length > 8) {
-                return "El comprobante no puede tener más de 8 dígitos";
-              }
-              if (!RegExp(r'^\d+$').hasMatch(value)) {
-                return "Solo se permiten números";
-              }
-              return null;
-            },
-          ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: _colorBorde),
         ),
-        const SizedBox(height: 4),
-        Text(
-          "Debe ingresar entre 2 y 8 dígitos numéricos",
-          style: TextStyle(
-            fontSize: 12,
-            color: _colorTexto.withValues(alpha: 0.6),
-            fontStyle: FontStyle.italic,
-          ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: _colorPrimario, width: 2),
         ),
+        prefixIcon: Icon(Icons.file_copy, color: _colorPrimario),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 16,
+        ),
+      ),
+      style: TextStyle(fontSize: 16, color: _colorTexto),
+      keyboardType: TextInputType.number,
+      inputFormatters: [
+        FilteringTextInputFormatter.digitsOnly,
+        LengthLimitingTextInputFormatter(8), // Máximo 8 dígitos
       ],
+      validator: (value) {
+        if (value == null || value.isEmpty) {
+          return "El número de comprobante es requerido";
+        }
+        if (value.length < 2) {
+          return "El comprobante debe tener al menos 2 dígitos";
+        }
+        if (value.length > 8) {
+          return "El comprobante no puede tener más de 8 dígitos";
+        }
+        if (!RegExp(r'^\d+$').hasMatch(value)) {
+          return "Solo se permiten números";
+        }
+        return null;
+      },
     );
   }
 
   Widget _buildCampoTotal() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          "Total de la Multa *",
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: _colorTexto,
-          ),
+    return TextFormField(
+      controller: _totalController,
+      decoration: InputDecoration(
+        labelText: "Valor total *",
+        filled: true,
+        fillColor: Colors.grey.shade50,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
         ),
-        const SizedBox(height: 8),
-        Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05),
-                blurRadius: 5,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: TextFormField(
-            controller: _totalController,
-            decoration: InputDecoration(
-              labelText: "Valor total *",
-              filled: true,
-              fillColor: _colorPrimario.withValues(alpha: 0.05),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide.none,
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: _colorBorde),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: _colorPrimario, width: 2),
-              ),
-              prefixIcon: Icon(Icons.attach_money, color: _colorPrimario),
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 16,
-              ),
-            ),
-            style: TextStyle(
-              fontSize: 18,
-              color: _colorPrimario,
-              fontWeight: FontWeight.bold,
-            ),
-            readOnly: true,
-            validator: (value) {
-              if (value == null || value.isEmpty || value == "0.00") {
-                return "Debe seleccionar un tipo de multa para generar el total";
-              }
-              return null;
-            },
-          ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: _colorBorde),
         ),
-      ],
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: _colorPrimario, width: 2),
+        ),
+        prefixIcon: Icon(Icons.attach_money, color: _colorPrimario),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 16,
+        ),
+      ),
+      style: TextStyle(
+        fontSize: 18,
+        color: _colorPrimario,
+        fontWeight: FontWeight.bold,
+      ),
+      readOnly: true,
+      validator: (value) {
+        if (value == null || value.isEmpty || value == "0.00") {
+          return "Debe seleccionar un tipo de multa para generar el total";
+        }
+        return null;
+      },
     );
   }
 
   Widget _buildCampoFechaHora() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          "Fecha y Hora de Emisión *",
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: _colorTexto,
-          ),
+    return TextFormField(
+      controller: _fechaEmisionController,
+      decoration: InputDecoration(
+        labelText: "Fecha y hora de emisión *",
+        filled: true,
+        fillColor: Colors.grey.shade50,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
         ),
-        const SizedBox(height: 8),
-        Container(
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: _colorBorde),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: _colorPrimario, width: 2),
+        ),
+        suffixIcon: Container(
+          margin: const EdgeInsets.all(8),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05),
-                blurRadius: 5,
-                offset: const Offset(0, 2),
-              ),
-            ],
+            color: _colorPrimario.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(10),
           ),
-          child: TextFormField(
-            controller: _fechaEmisionController,
-            decoration: InputDecoration(
-              labelText: "Seleccione fecha y hora *",
-              filled: true,
-              fillColor: Colors.white,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide.none,
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: _colorBorde),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: _colorPrimario, width: 2),
-              ),
-              suffixIcon: Container(
-                margin: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: _colorPrimario.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: IconButton(
-                  icon: Icon(Icons.calendar_today, color: _colorPrimario),
-                  onPressed: _seleccionarFechaHora,
-                ),
-              ),
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 16,
-              ),
-            ),
-            style: TextStyle(
-              fontSize: 16,
-              color: _colorTexto,
-              fontWeight: FontWeight.w500,
-            ),
-            readOnly: true,
-            onTap: _seleccionarFechaHora,
-            validator: (value) {
-              if (value == null || value.isEmpty) {
-                return "La fecha y hora son requeridas";
-              }
-              try {
-                final fecha = NotificacionService.parsearFechaHora(value);
-                if (fecha.isAfter(DateTime.now())) {
-                  return "La fecha no puede ser futura";
-                }
-                return null;
-              } catch (e) {
-                return "Formato de fecha inválido";
-              }
-            },
+          child: IconButton(
+            icon: Icon(Icons.calendar_today, color: _colorPrimario),
+            onPressed: _seleccionarFechaHora,
           ),
         ),
-      ],
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 16,
+        ),
+      ),
+      style: TextStyle(
+        fontSize: 16,
+        color: _colorTexto,
+        fontWeight: FontWeight.w500,
+      ),
+      readOnly: true,
+      onTap: _seleccionarFechaHora,
+      validator: (value) {
+        if (value == null || value.isEmpty) {
+          return "La fecha y hora son requeridas";
+        }
+        try {
+          final fecha = NotificacionService.parsearFechaHora(value);
+          if (fecha.isAfter(DateTime.now())) {
+            return "La fecha no puede ser futura";
+          }
+          return null;
+        } catch (e) {
+          return "Formato de fecha inválido";
+        }
+      },
     );
   }
 
   Widget _buildCampoUbicacion() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          "Ubicación *",
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: _colorTexto,
-          ),
+    return TextFormField(
+      controller: _ubicacionController,
+      focusNode: _ubicacionFocusNode,
+      decoration: InputDecoration(
+        labelText: "Ubicación *",
+        filled: true,
+        fillColor: Colors.grey.shade50,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
         ),
-        const SizedBox(height: 8),
-        Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05),
-                blurRadius: 5,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: TextFormField(
-            controller: _ubicacionController,
-            focusNode: _ubicacionFocusNode,
-            decoration: InputDecoration(
-              labelText: "Ingrese la ubicación *",
-              filled: true,
-              fillColor: Colors.white,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide.none,
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: _colorBorde),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: _colorPrimario, width: 2),
-              ),
-              prefixIcon: Icon(Icons.location_on, color: _colorPrimario),
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 16,
-              ),
-            ),
-            style: TextStyle(fontSize: 16, color: _colorTexto),
-            validator: (value) {
-              if (value == null || value.isEmpty) {
-                return "La ubicación es requerida";
-              }
-              if (value.length < 3) {
-                return "La ubicación debe tener al menos 3 caracteres";
-              }
-              return null;
-            },
-          ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: _colorBorde),
         ),
-      ],
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: _colorPrimario, width: 2),
+        ),
+        prefixIcon: Icon(Icons.location_on, color: _colorPrimario),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 16,
+        ),
+      ),
+      style: TextStyle(fontSize: 16, color: _colorTexto),
+      validator: (value) {
+        if (value == null || value.isEmpty) {
+          return "La ubicación es requerida";
+        }
+        if (value.length < 3) {
+          return "La ubicación debe tener al menos 3 caracteres";
+        }
+        return null;
+      },
     );
   }
 
   Widget _buildCampoObservacion() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          "Observaciones *",
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: _colorTexto,
-          ),
+    return TextFormField(
+      controller: _observacionController,
+      focusNode: _observacionFocusNode,
+      decoration: InputDecoration(
+        labelText: "Observaciones *",
+        filled: true,
+        fillColor: Colors.grey.shade50,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
         ),
-        const SizedBox(height: 8),
-        Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05),
-                blurRadius: 5,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: TextFormField(
-            controller: _observacionController,
-            focusNode: _observacionFocusNode,
-            decoration: InputDecoration(
-              labelText: "Ingrese observaciones adicionales *",
-              filled: true,
-              fillColor: Colors.white,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide.none,
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: _colorBorde),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: _colorPrimario, width: 2),
-              ),
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 16,
-              ),
-            ),
-            keyboardType: TextInputType.multiline,
-            maxLines: 4,
-            style: TextStyle(fontSize: 16, color: _colorTexto),
-            validator: (value) {
-              if (value == null || value.isEmpty) {
-                return "Las observaciones son requeridas";
-              }
-              if (value.length < 5) {
-                return "Las observaciones deben tener al menos 10 caracteres";
-              }
-              return null;
-            },
-          ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: _colorBorde),
         ),
-      ],
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: _colorPrimario, width: 2),
+        ),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 16,
+        ),
+      ),
+      keyboardType: TextInputType.multiline,
+      maxLines: 4,
+      style: TextStyle(fontSize: 16, color: _colorTexto),
+      validator: (value) {
+        if (value == null || value.isEmpty) {
+          return "Las observaciones son requeridas";
+        }
+        if (value.length < 5) {
+          return "Las observaciones deben tener al menos 10 caracteres";
+        }
+        return null;
+      },
     );
   }
 
@@ -2025,118 +1927,73 @@ class _NotificacionesscreenState extends State<Notificacionesscreen> {
                 observacionOk,
                 fotosOk,
               ),
-              const SizedBox(height: 12),
-              // Fila: botón impresora + botón guardar
-              Row(
-                children: [
-                  // Botón impresora (compacto, siempre visible)
-                  _buildBotonImpresora(formularioCompleto),
-                  const SizedBox(width: 12),
-                  // Botón guardar (expande el espacio restante)
-                  Expanded(
-                    child: SizedBox(
-                      height: 52,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(12),
-                          gradient: puedeGuardar
-                              ? const LinearGradient(
-                                  begin: Alignment.centerLeft,
-                                  end: Alignment.centerRight,
-                                  colors: [
-                                    Color(0xFF001F54),
-                                    Color(0xFF5E17EB),
-                                  ],
-                                )
-                              : null,
-                          color: puedeGuardar ? null : Colors.grey[350],
-                        ),
-                        child: ElevatedButton.icon(
-                          icon: _subiendoEvidencias
-                              ? const SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    valueColor: AlwaysStoppedAnimation<Color>(
-                                      Colors.white,
-                                    ),
-                                  ),
-                                )
-                              : const Icon(
-                                  Icons.save_alt,
-                                  size: 20,
-                                  color: Colors.white,
-                                ),
-                          label: Text(
-                            _subiendoEvidencias
-                                ? 'SUBIENDO...'
-                                : 'GUARDAR MULTA',
-                            style: const TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
+              const SizedBox(height: 10),
+              // Botón guardar (ancho completo)
+              SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    gradient: puedeGuardar
+                        ? const LinearGradient(
+                            begin: Alignment.centerLeft,
+                            end: Alignment.centerRight,
+                            colors: [Color(0xFF0A1628), Color(0xFF000000)],
+                          )
+                        : null,
+                    color: puedeGuardar ? null : Colors.grey[300],
+                    boxShadow: puedeGuardar
+                        ? [
+                            BoxShadow(
+                              color: const Color(
+                                0xFF0A1628,
+                              ).withValues(alpha: 0.3),
+                              blurRadius: 8,
+                              offset: const Offset(0, 3),
                             ),
-                          ),
-                          onPressed: puedeGuardar ? _guardarMulta : null,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.transparent,
-                            shadowColor: Colors.transparent,
-                            disabledBackgroundColor: Colors.transparent,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
+                          ]
+                        : null,
+                  ),
+                  child: ElevatedButton.icon(
+                    icon: _subiendoEvidencias
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                Colors.white,
+                              ),
                             ),
-                            elevation: 0,
+                          )
+                        : const Icon(
+                            Icons.save_alt,
+                            size: 20,
+                            color: Colors.white,
                           ),
-                        ),
+                    label: Text(
+                      _subiendoEvidencias ? 'SUBIENDO...' : 'GUARDAR MULTA',
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
                       ),
                     ),
+                    onPressed: puedeGuardar ? _guardarMulta : null,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.transparent,
+                      shadowColor: Colors.transparent,
+                      disabledBackgroundColor: Colors.transparent,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 0,
+                    ),
                   ),
-                ],
+                ),
               ),
             ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBotonImpresora(bool formularioCompleto) {
-    final bool conectada = _gestorImpresora.estaConectada;
-    final bool puedeImprimir = conectada && formularioCompleto;
-    return SizedBox(
-      width: 52,
-      height: 52,
-      child: Tooltip(
-        message: puedeImprimir
-            ? 'Imprimir ticket'
-            : conectada
-            ? 'Impresora conectada'
-            : 'Configurar impresora',
-        child: ElevatedButton(
-          onPressed: puedeImprimir
-              ? _imprimirMulta
-              : () => _mostrarSelectorImpresora(),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: conectada
-                ? const Color(0xFF00C853)
-                : const Color(0xFF001F54).withValues(alpha: 0.12),
-            foregroundColor: conectada ? Colors.white : const Color(0xFF001F54),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-              side: BorderSide(
-                color: conectada
-                    ? const Color(0xFF00C853)
-                    : const Color(0xFF001F54).withValues(alpha: 0.3),
-                width: 1.5,
-              ),
-            ),
-            padding: EdgeInsets.zero,
-            elevation: 0,
-          ),
-          child: Icon(
-            puedeImprimir ? Icons.print : Icons.print_outlined,
-            size: 22,
           ),
         ),
       ),
@@ -2166,46 +2023,32 @@ class _NotificacionesscreenState extends State<Notificacionesscreen> {
     final progreso = completados / total;
     final todoCompleto = completados == total;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Row(
       children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              todoCompleto
-                  ? '✔ Formulario completo'
-                  : 'Progreso: $completados/$total campos',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: todoCompleto
+        Expanded(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: LinearProgressIndicator(
+              value: progreso,
+              minHeight: 6,
+              backgroundColor: const Color(0xFFE8EAF0),
+              valueColor: AlwaysStoppedAnimation<Color>(
+                todoCompleto
                     ? const Color(0xFF00C853)
-                    : const Color(0xFF555555),
+                    : const Color(0xFF0A1628),
               ),
             ),
-            Text(
-              '${(progreso * 100).round()}%',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                color: todoCompleto
-                    ? const Color(0xFF00C853)
-                    : const Color(0xFF001F54),
-              ),
-            ),
-          ],
+          ),
         ),
-        const SizedBox(height: 5),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: LinearProgressIndicator(
-            value: progreso,
-            minHeight: 5,
-            backgroundColor: const Color(0xFFE0E0E0),
-            valueColor: AlwaysStoppedAnimation<Color>(
-              todoCompleto ? const Color(0xFF00C853) : const Color(0xFF5E17EB),
-            ),
+        const SizedBox(width: 12),
+        Text(
+          todoCompleto ? 'Listo' : '$completados/$total',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            color: todoCompleto
+                ? const Color(0xFF00C853)
+                : const Color(0xFF0A1628),
           ),
         ),
       ],
@@ -2237,83 +2080,54 @@ class _NotificacionesscreenState extends State<Notificacionesscreen> {
   }
 
   Widget _dropdownMulta() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          "Tipo de Multa *",
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: _colorTexto,
-          ),
+    return DropdownButtonFormField<Multa>(
+      isExpanded: true,
+      decoration: InputDecoration(
+        labelText: "Tipo de multa *",
+        filled: true,
+        fillColor: Colors.grey.shade50,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
         ),
-        const SizedBox(height: 8),
-        Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05),
-                blurRadius: 5,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: DropdownButtonFormField<Multa>(
-            isExpanded: true,
-            decoration: InputDecoration(
-              labelText: "Seleccione el tipo de multa *",
-              filled: true,
-              fillColor: Colors.white,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide.none,
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: _colorBorde),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: _colorPrimario, width: 2),
-              ),
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 8,
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: _colorBorde),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: _colorPrimario, width: 2),
+        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      ),
+      initialValue: multaSeleccionada,
+      items: multas
+          .map(
+            (m) => DropdownMenuItem(
+              value: m,
+              child: Text(
+                "${m.detalleMulta} (\$${m.valor.toStringAsFixed(2)})",
+                style: TextStyle(fontSize: 14, color: _colorTexto),
               ),
             ),
-            initialValue: multaSeleccionada,
-            items: multas
-                .map(
-                  (m) => DropdownMenuItem(
-                    value: m,
-                    child: Text(
-                      "${m.detalleMulta} (\$${m.valor.toStringAsFixed(2)})",
-                      style: TextStyle(fontSize: 14, color: _colorTexto),
-                    ),
-                  ),
-                )
-                .toList(),
-            onChanged: (value) {
-              setState(() {
-                multaSeleccionada = value;
-                if (value != null) {
-                  _totalController.text = value.valor.toStringAsFixed(2);
-                }
-              });
-              _actualizarEstadoBoton();
-            },
-            style: TextStyle(fontSize: 14, color: _colorTexto),
-            validator: (value) {
-              if (value == null) {
-                return "Debe seleccionar un tipo de multa";
-              }
-              return null;
-            },
-          ),
-        ),
-      ],
+          )
+          .toList(),
+      onChanged: (value) {
+        setState(() {
+          multaSeleccionada = value;
+          if (value != null) {
+            _totalController.text = value.valor.toStringAsFixed(2);
+          }
+        });
+        _actualizarEstadoBoton();
+      },
+      style: TextStyle(fontSize: 14, color: _colorTexto),
+      validator: (value) {
+        if (value == null) {
+          return "Debe seleccionar un tipo de multa";
+        }
+        return null;
+      },
     );
   }
 

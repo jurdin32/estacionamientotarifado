@@ -2,8 +2,10 @@ import 'dart:convert';
 import 'dart:async';
 import 'package:estacionamientotarifado/servicios/servicioEstacionamiento.dart';
 import 'package:estacionamientotarifado/servicios/servicioEstacionamientoTarjeta.dart';
+import 'package:estacionamientotarifado/servicios/servicioWebSocket.dart';
 import 'package:estacionamientotarifado/tarjetas/models/Estacionamiento.dart';
 import 'package:estacionamientotarifado/tarjetas/models/Tarjetas.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -31,11 +33,14 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
   /// Es la fuente de verdad para calcular el saldo disponible en cada tarjeta.
   Map<int, int> _tiemposTarjeta = {};
 
+  /// Mapa {usuario_id → nombre} para mostrar quién registró cada estacionamiento.
+  Map<int, String> _nombresUsuarios = {};
+
   bool _isLoading = true;
   String _searchQuery = '';
   String _rangoEstacionamientos = '';
   int? _usuario;
-  final Color primaryColor = const Color(0xFF001F54);
+  final Color primaryColor = const Color(0xFF0A1628);
   final Color disabledColor = Colors.blue;
   final Color successColor = const Color(0xFF00C853);
   final Color errorColor = const Color(0xFFD32F2F);
@@ -49,7 +54,27 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
   final Set<int> _enProceso = {};
   Timer? _pollingTimer;
   bool _isRefreshing = false;
-  static const Duration _pollingInterval = Duration(seconds: 4);
+
+  /// Suscripción WebSocket para recibir actualizaciones en tiempo real.
+  StreamSubscription<WsEvento>? _wsEstacionesSub;
+  StreamSubscription<WsEvento>? _wsTarjetasSub;
+  StreamSubscription<bool>? _wsEstadoSub;
+  bool _wsConectado = false;
+
+  /// Polling de fallback: activo solo cuando el WebSocket está caído.
+  static const Duration _fallbackPollingInterval = Duration(seconds: 45);
+
+  /// Debounce para persistir caché: evita escrituras excesivas a disco.
+  Timer? _persistDebounce;
+
+  /// Throttle para reintentos de conexión por cambio de red.
+  DateTime _ultimoReintento = DateTime(2000);
+
+  /// Debounce para evitar múltiples ciclos resumed en ráfaga.
+  DateTime _ultimoResumed = DateTime(2000);
+
+  /// Timer del fallback para evitar agendarlo múltiples veces.
+  Timer? _fallbackPendiente;
 
   final TextEditingController _rangoController = TextEditingController();
   final TextEditingController _searchController = TextEditingController();
@@ -87,12 +112,20 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
     _rangoController.dispose();
     _searchController.dispose();
     _pollingTimer?.cancel();
+    _persistDebounce?.cancel();
+    _fallbackPendiente?.cancel();
     _tabController.dispose();
     _estacionamientosLiberando.clear();
     _connectivitySubscription?.cancel();
     _notificationStreamSubscription?.cancel();
+    _wsEstacionesSub?.cancel();
+    _wsTarjetasSub?.cancel();
+    _wsEstadoSub?.cancel();
     super.dispose();
   }
+
+  /// Flag: indica si hubo cambios WS mientras la app estaba en background.
+  bool _hayDatosPendientesUI = false;
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -100,54 +133,352 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
 
     switch (state) {
       case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
+        // App minimizada: mantener WS vivo, solo suspender UI
         _appEnSegundoPlano = true;
-        debugPrint('📱 App en segundo plano - Cancelando operaciones de red');
-        _cancelarOperacionesRed();
+        _pollingTimer?.cancel();
+        ServicioWebSocket.instancia.pausar(); // reduce heartbeat, NO cierra
+        debugPrint('📱 Background — WS vivo, UI suspendida');
         break;
       case AppLifecycleState.resumed:
         _appEnSegundoPlano = false;
-        debugPrint('📱 App en primer plano - Reanudando operaciones');
+        // Ignorar resumed duplicados en ráfaga (< 2s entre sí)
+        final ahora = DateTime.now();
+        if (ahora.difference(_ultimoResumed).inSeconds < 2) {
+          debugPrint('📱 Foreground — duplicado ignorado');
+          break;
+        }
+        _ultimoResumed = ahora;
+        debugPrint('📱 Foreground — restaurando UI');
         _reanudarOperaciones();
         break;
       case AppLifecycleState.inactive:
-      case AppLifecycleState.detached:
-        _appEnSegundoPlano = true;
-        _cancelarOperacionesRed();
+        // Transición breve (ej: llamada entrante) — no hacer nada
         break;
-      case AppLifecycleState.hidden:
-        // Nuevo estado en Flutter 3.16+
+      case AppLifecycleState.detached:
+        // App siendo destruida: cerrar todo
         _appEnSegundoPlano = true;
-        _cancelarOperacionesRed();
+        _pollingTimer?.cancel();
+        _wsEstadoSub?.cancel();
+        ServicioWebSocket.instancia.desconectar();
+        _wsConectado = false;
+        debugPrint('📱 Detached — WS cerrado');
         break;
     }
-  }
-
-  void _cancelarOperacionesRed() {
-    _pollingTimer?.cancel();
   }
 
   void _reanudarOperaciones() {
-    if (mounted) {
-      _iniciarPolling();
+    if (!mounted) return;
+    final ws = ServicioWebSocket.instancia;
+    ws.reanudar(); // restaura heartbeat normal o reconecta
+
+    // Si hubo datos WS en background, refrescar UI de una sola vez
+    if (_hayDatosPendientesUI) {
+      _hayDatosPendientesUI = false;
+      setState(() {
+        _filteredEstaciones = _filterEstaciones(_searchQuery);
+        _rangedEstaciones = _computeRangedEstaciones(_filteredEstaciones);
+      });
+      debugPrint('🔄 UI sincronizada con datos acumulados en background');
+    }
+
+    // Si WS no reconectó, activar fallback (solo 1 timer a la vez)
+    if (!_wsConectado) {
+      _fallbackPendiente?.cancel();
+      _fallbackPendiente = Timer(const Duration(seconds: 5), () {
+        if (mounted && !_wsConectado) {
+          _iniciarFallbackPolling();
+        }
+      });
     }
   }
 
-  void _iniciarPolling() {
+  /// Conecta al WebSocket y suscribe a los canales de estaciones y tarjetas.
+  /// Si el WS se cae, activa un polling HTTP más lento como fallback.
+  void _iniciarWebSocket() {
+    final ws = ServicioWebSocket.instancia;
+
+    // Conectar (si ya está conectado, no hace nada)
+    ws.conectar(token: _token);
+
+    // Escuchar cambios de estado WS para activar/desactivar fallback polling
+    _wsEstadoSub?.cancel();
+    _wsEstadoSub = ws.onEstadoCambio.listen((conectado) {
+      if (!mounted) return;
+      if (conectado) {
+        _wsConectado = true;
+        if (!_appEnSegundoPlano) _cancelarFallbackPolling();
+        debugPrint('🟢 WS conectado — polling HTTP desactivado');
+      } else {
+        _wsConectado = false;
+        if (!_appEnSegundoPlano) {
+          debugPrint('🔴 WS desconectado — activando fallback polling');
+          _iniciarFallbackPolling();
+        }
+      }
+    });
+
+    // Suscribirse a canales
+    _wsEstacionesSub?.cancel();
+    _wsEstacionesSub = ws.escuchar('estaciones').listen((evento) {
+      if (!mounted) return;
+      _wsConectado = true;
+      if (!_appEnSegundoPlano) _cancelarFallbackPolling();
+      _procesarEventoWsEstaciones(evento);
+    });
+
+    _wsTarjetasSub?.cancel();
+    _wsTarjetasSub = ws.escuchar('tarjetas').listen((evento) {
+      if (!mounted) return;
+      _wsConectado = true;
+      if (!_appEnSegundoPlano) _cancelarFallbackPolling();
+      _procesarEventoWsTarjetas(evento);
+    });
+
+    ws.suscribir('estaciones');
+    ws.suscribir('tarjetas');
+
+    // Solo iniciar fallback polling si WS no conecta en 5 segundos
+    Future.delayed(const Duration(seconds: 5), () {
+      if (mounted && !_wsConectado) {
+        _iniciarFallbackPolling();
+      }
+    });
+  }
+
+  /// Procesa eventos de estaciones recibidos por WebSocket.
+  void _procesarEventoWsEstaciones(WsEvento evento) {
+    try {
+      if (evento.accion == 'snapshot' && evento.datos is List) {
+        // Snapshot completo de estaciones — merge protegido
+        final lista = (evento.datos as List)
+            .map((e) => Estacionamiento.fromJson(e as Map<String, dynamic>))
+            .toList();
+        lista.sort((a, b) => a.numero.compareTo(b.numero));
+
+        // Proteger estaciones con operaciones en curso o tarjeta activa
+        // para no revertir cambios locales que aún no confirmó el servidor.
+        if (_estaciones.isNotEmpty) {
+          final mapaLocal = {for (final e in _estaciones) e.id: e};
+          for (var i = 0; i < lista.length; i++) {
+            final remoto = lista[i];
+            // No sobreescribir si hay operación local en curso
+            if (_enProceso.contains(remoto.id)) {
+              final local = mapaLocal[remoto.id];
+              if (local != null) lista[i] = local;
+              continue;
+            }
+            // No revertir ocupado→libre si hay tarjeta activa local
+            final local = mapaLocal[remoto.id];
+            if (local != null &&
+                local.estado == true &&
+                remoto.estado == false &&
+                _estacionamientosTarjeta.any(
+                  (t) => t.estacionId == remoto.id,
+                )) {
+              debugPrint(
+                '🛡️ WS snapshot: protegiendo estación #${local.numero} '
+                '(tiene tarjeta activa)',
+              );
+              lista[i] = local;
+            }
+          }
+        }
+
+        if (mounted) {
+          // Detectar si hubo cambios reales antes de reconstruir UI
+          bool hayCambios = lista.length != _estaciones.length;
+          if (!hayCambios) {
+            for (int i = 0; i < lista.length; i++) {
+              if (lista[i].id != _estaciones[i].id ||
+                  lista[i].estado != _estaciones[i].estado ||
+                  lista[i].placa != _estaciones[i].placa) {
+                hayCambios = true;
+                break;
+              }
+            }
+          }
+          if (hayCambios || _isLoading) {
+            _estaciones = lista;
+            if (_appEnSegundoPlano) {
+              _hayDatosPendientesUI = true;
+            } else {
+              setState(() {
+                _filteredEstaciones = _filterEstaciones(_searchQuery);
+                _rangedEstaciones = _computeRangedEstaciones(
+                  _filteredEstaciones,
+                );
+                if (_isLoading) _isLoading = false;
+              });
+            }
+          }
+        }
+        unawaited(_persistirCacheCompleto());
+      } else if (evento.accion == 'update' && evento.datos is Map) {
+        // Actualización de una estación específica
+        final nuevo = Estacionamiento.fromJson(
+          Map<String, dynamic>.from(evento.datos as Map),
+        );
+        if (_enProceso.contains(nuevo.id)) return;
+
+        // Protección anti-reversión: no liberar si hay tarjeta activa local.
+        // El servidor podría enviar estado=false por una race condition o
+        // snapshot parcial; la liberación real llega con tarjetas/delete.
+        final actual = _estaciones.where((e) => e.id == nuevo.id).firstOrNull;
+        if (actual != null &&
+            actual.estado == true &&
+            nuevo.estado == false &&
+            _estacionamientosTarjeta.any((t) => t.estacionId == nuevo.id)) {
+          debugPrint(
+            '🛡️ WS update: bloqueando liberación de estación '
+            '#${actual.numero} (tiene tarjeta activa)',
+          );
+          return;
+        }
+
+        if (mounted) {
+          // Actualizar datos internos siempre (foreground y background)
+          var idx = _estaciones.indexWhere((e) => e.id == nuevo.id);
+          if (idx == -1) {
+            idx = _estaciones.indexWhere((e) => e.numero == nuevo.numero);
+          }
+          if (idx != -1) {
+            _estaciones[idx] = nuevo;
+          } else {
+            if (!_estaciones.any((e) => e.numero == nuevo.numero)) {
+              _estaciones.add(nuevo);
+              _estaciones.sort((a, b) => a.numero.compareTo(b.numero));
+            }
+          }
+          if (_appEnSegundoPlano) {
+            _hayDatosPendientesUI = true;
+          } else {
+            setState(() {
+              _filteredEstaciones = _filterEstaciones(_searchQuery);
+              _rangedEstaciones = _computeRangedEstaciones(_filteredEstaciones);
+            });
+          }
+        }
+        unawaited(_persistirCacheCompleto());
+      }
+    } catch (e) {
+      debugPrint('⚠️ Error procesando WS estaciones: $e');
+    }
+  }
+
+  /// Procesa eventos de tarjetas recibidos por WebSocket.
+  void _procesarEventoWsTarjetas(WsEvento evento) {
+    try {
+      if (evento.accion == 'snapshot' && evento.datos is List) {
+        final lista = (evento.datos as List)
+            .map(
+              (e) =>
+                  Estacionamiento_Tarjeta.fromJson(e as Map<String, dynamic>),
+            )
+            .where((t) => t.estacionId > 0)
+            .toList();
+
+        // Proteger tarjetas cuya estación tiene una operación en curso
+        if (_enProceso.isNotEmpty) {
+          final tarjetasProtegidas = _estacionamientosTarjeta
+              .where((t) => _enProceso.contains(t.estacionId))
+              .toList();
+          for (final tp in tarjetasProtegidas) {
+            if (!lista.any((t) => t.estacionId == tp.estacionId)) {
+              lista.add(tp);
+            }
+          }
+        }
+
+        // Detectar cambios reales
+        final idsActuales = _estacionamientosTarjeta
+            .map((t) => t.estacionId)
+            .toSet();
+        final idsNuevos = lista.map((t) => t.estacionId).toSet();
+        final hayCambiosTarjetas =
+            idsActuales.length != idsNuevos.length ||
+            !idsActuales.containsAll(idsNuevos);
+
+        if (hayCambiosTarjetas && mounted) {
+          _estacionamientosTarjeta = lista;
+          if (_appEnSegundoPlano) {
+            _hayDatosPendientesUI = true;
+          } else {
+            setState(() {});
+          }
+        }
+        unawaited(_persistirCacheCompleto());
+      } else if (evento.accion == 'update' && evento.datos is Map) {
+        final tarjeta = Estacionamiento_Tarjeta.fromJson(
+          Map<String, dynamic>.from(evento.datos as Map),
+        );
+        if (tarjeta.estacionId <= 0) return;
+        if (_enProceso.contains(tarjeta.estacionId)) return;
+        if (mounted) {
+          final idx = _estacionamientosTarjeta.indexWhere(
+            (t) => t.estacionId == tarjeta.estacionId,
+          );
+          if (idx == -1) {
+            _estacionamientosTarjeta.add(tarjeta);
+          } else {
+            _estacionamientosTarjeta[idx] = tarjeta;
+          }
+          if (_appEnSegundoPlano) {
+            _hayDatosPendientesUI = true;
+          } else {
+            setState(() {});
+          }
+        }
+        unawaited(_persistirCacheCompleto());
+      } else if (evento.accion == 'delete' && evento.datos is Map) {
+        final estacionId = (evento.datos as Map)['estacion'] as int?;
+        if (estacionId != null && !_enProceso.contains(estacionId) && mounted) {
+          _estacionamientosTarjeta.removeWhere(
+            (t) => t.estacionId == estacionId,
+          );
+          if (_appEnSegundoPlano) {
+            _hayDatosPendientesUI = true;
+          } else {
+            setState(() {});
+          }
+          unawaited(_persistirCacheCompleto());
+        }
+      } else if (evento.accion == 'tiempo' && evento.datos is Map) {
+        final num = (evento.datos as Map)['numero'] as int?;
+        final tiempo = (evento.datos as Map)['tiempo'] as int?;
+        if (num != null && tiempo != null && mounted) {
+          _tiemposTarjeta[num] = tiempo;
+          if (_appEnSegundoPlano) {
+            _hayDatosPendientesUI = true;
+          } else {
+            setState(() {});
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('⚠️ Error procesando WS tarjetas: $e');
+    }
+  }
+
+  /// Polling HTTP lento como fallback cuando el WebSocket no está disponible.
+  void _iniciarFallbackPolling() {
     _pollingTimer?.cancel();
-    _pollingTimer = Timer.periodic(_pollingInterval, (_) {
-      if (mounted && !_appEnSegundoPlano) {
+    _pollingTimer = Timer.periodic(_fallbackPollingInterval, (_) {
+      if (mounted && !_appEnSegundoPlano && !_wsConectado) {
         _actualizarDatosSilencioso();
       }
     });
   }
 
-  /// Refresco silencioso automático (cada 4 s): sincroniza todo.
+  void _cancelarFallbackPolling() {
+    _pollingTimer?.cancel();
+  }
+
+  /// Refresco silencioso automático (fallback polling): sincroniza estaciones y tarjetas.
+  /// Solo se ejecuta cuando el WS está caído. No descarga /api/tarjeta/ para ahorrar datos.
   Future<void> _actualizarDatosSilencioso() async {
-    if (_appEnSegundoPlano || !mounted) return;
-    await Future.wait([
-      _sincronizarTarjetasSilencioso(),
-      _fetchAndCacheTarjetasTiempo(),
-    ]);
+    if (_appEnSegundoPlano || !mounted || _wsConectado) return;
+    await _sincronizarTarjetasSilencioso();
   }
 
   /// Refresco completo manual (botón): descarga estacionamientos + tarjetas.
@@ -167,11 +498,10 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
     }
   }
 
-  /// Sincroniza solo las tarjetas que cambiaron — sin tocar estacionamientos.
-  /// Sincroniza estacionamientos (fuente de verdad: /api/estacion/) y tarjetas.
-  /// Solo aplica los cambios detectados por diff — sin reconstruir la lista completa.
+  /// Sincroniza estacionamientos y tarjetas vía HTTP.
+  /// Solo se debe llamar cuando el WebSocket NO está activo (fallback).
   Future<void> _sincronizarTarjetasSilencioso() async {
-    if (_appEnSegundoPlano || !mounted) return;
+    if (_appEnSegundoPlano || !mounted || _wsConectado) return;
     try {
       final connectivity = await Connectivity().checkConnectivity();
       if (connectivity.isEmpty ||
@@ -253,7 +583,11 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
       setState(() {
         // Aplicar cambios de estado de estacionamientos (fuente de verdad)
         for (final e in estacionesCambiadas) {
-          final idx = _estaciones.indexWhere((s) => s.id == e.id);
+          // Buscar por id o por numero para evitar duplicados por caché corrupto
+          var idx = _estaciones.indexWhere((s) => s.id == e.id);
+          if (idx == -1) {
+            idx = _estaciones.indexWhere((s) => s.numero == e.numero);
+          }
           if (idx != -1) {
             _estaciones[idx] = e;
           }
@@ -309,14 +643,32 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
   }
 
   void _reintentarConexion() {
-    if (mounted && !_appEnSegundoPlano) {
-      debugPrint('🔄 Reintentando conexión...');
-      _sincronizarTarjetasSilencioso();
+    if (!mounted || _appEnSegundoPlano) return;
+    // Throttle: máximo una vez cada 15 segundos
+    final ahora = DateTime.now();
+    if (ahora.difference(_ultimoReintento).inSeconds < 15) return;
+    _ultimoReintento = ahora;
+    debugPrint('🔄 Red recuperada — reintentando WS...');
+    // Prioridad: reconectar WS. Si ya está conectado, no hace nada.
+    // Solo sincronizar HTTP si WS sigue caído después de un breve delay.
+    final ws = ServicioWebSocket.instancia;
+    if (!ws.conectado) {
+      ws.reanudar();
+      Future.delayed(const Duration(seconds: 5), () {
+        if (mounted && !_wsConectado && !_appEnSegundoPlano) {
+          _sincronizarTarjetasSilencioso();
+        }
+      });
     }
   }
 
   // Inicializar OneSignal y configurar el manejo de notificaciones
   void _initializeOneSignal() {
+    // Solo en Android/iOS
+    if (defaultTargetPlatform != TargetPlatform.android &&
+        defaultTargetPlatform != TargetPlatform.iOS) {
+      return;
+    }
     try {
       // Configurar el manejador de notificaciones recibidas
       OneSignal.Notifications.addClickListener(_handleNotificationClicked);
@@ -388,21 +740,28 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
     }
   }
 
-  // Forzar actualización completa de datos (silenciosa — llamada desde notificaciones)
+  // Forzar actualización de datos (llamada desde notificaciones push).
+  // Si el WS está activo, los datos ya llegan en tiempo real — no hacer HTTP.
+  // Solo forzar HTTP si el WS está caído.
+  DateTime _ultimoForceRefresh = DateTime(2000);
   void _forceRefreshData() async {
     if (_appEnSegundoPlano || !mounted) return;
+    // Throttle: máximo una vez cada 30 segundos
+    final ahora = DateTime.now();
+    if (ahora.difference(_ultimoForceRefresh).inSeconds < 30) return;
+    _ultimoForceRefresh = ahora;
+
+    if (_wsConectado) {
+      // WS activo: los datos ya están actualizados en tiempo real.
+      debugPrint('📨 Notificación recibida — WS activo, sin HTTP extra');
+      return;
+    }
     try {
       final connectivityResult = await Connectivity().checkConnectivity();
       if (connectivityResult == ConnectivityResult.none) return;
 
-      // Actualizar en background sin tocar _isLoading para no ocultar los datos
-      await Future.wait([
-        _fetchAndCacheEstacionamientos(),
-        _fetchAndCacheEstacionamientosTarjeta(),
-        _fetchAndCacheTarjetasTiempo(),
-      ]);
-      await _loadRangoPreferencias();
-      debugPrint('✅ Datos actualizados por notificación');
+      await _sincronizarTarjetasSilencioso();
+      debugPrint('✅ Datos actualizados por notificación (fallback HTTP)');
     } catch (e) {
       debugPrint('⚠️ _forceRefreshData: $e');
     }
@@ -541,9 +900,12 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
       List<Estacionamiento> cachedEstaciones = [];
       if (jsonString != null) {
         final List<dynamic> jsonList = json.decode(jsonString);
-        cachedEstaciones = jsonList
+        final parsed = jsonList
             .map((e) => Estacionamiento.fromJson(e))
             .toList();
+        // Deduplicar por numero (puede haber datos corruptos en caché antigua)
+        final seen = <int>{};
+        cachedEstaciones = parsed.where((e) => seen.add(e.numero)).toList();
         cachedEstaciones.sort((a, b) => a.numero.compareTo(b.numero));
       }
 
@@ -569,6 +931,29 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
         );
       }
 
+      // --- Datos de caché: nombres de usuarios ---
+      final usuariosRaw = prefs.getString('cache_admin_usuarios');
+      Map<int, String> nombresMap = {};
+      if (usuariosRaw != null) {
+        final List<dynamic> usuariosList = json.decode(usuariosRaw);
+        for (final u in usuariosList) {
+          if (u is Map<String, dynamic> && u['id'] != null) {
+            final nombreCompleto =
+                '${u['first_name'] ?? ''} ${u['last_name'] ?? ''}'.trim();
+            final partes = nombreCompleto.split(' ');
+            // nombre[0] = primer nombre, nombre[2] = primer apellido
+            final corto = partes.length >= 3
+                ? '${partes[0]} ${partes[2]}'
+                : partes.isNotEmpty
+                ? partes.first
+                : '';
+            nombresMap[u['id'] as int] = corto.isNotEmpty
+                ? corto
+                : (u['username'] ?? 'Usuario');
+          }
+        }
+      }
+
       // --- Rango ---
       final rangoGuardado = prefs.getString('rango_estacionamientos') ?? '';
 
@@ -591,6 +976,9 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
         if (cachedTiemposTarjeta.isNotEmpty) {
           _tiemposTarjeta = cachedTiemposTarjeta;
         }
+        if (nombresMap.isNotEmpty) {
+          _nombresUsuarios = nombresMap;
+        }
       });
 
       if (cachedTarjetas.isNotEmpty) {
@@ -602,7 +990,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
 
       final tieneCache = jsonString != null;
       if (!tieneCache) {
-        // Primera vez: descargar todo
+        // Primera vez sin caché: descargar todo por HTTP, luego activar WS.
         unawaited(
           Future.wait([
                 _fetchAndCacheEstacionamientos(),
@@ -610,23 +998,16 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
                 _fetchAndCacheTarjetasTiempo(),
               ])
               .then((_) {
-                if (mounted) _iniciarPolling();
+                if (mounted) _iniciarWebSocket();
               })
               .catchError((e) {
-                if (mounted) _iniciarPolling();
+                if (mounted) _iniciarWebSocket();
               }),
         );
       } else {
-        // Ya hay caché: mostrar inmediatamente y sincronizar todo en background.
-        unawaited(
-          Future.wait([
-            _sincronizarTarjetasSilencioso(),
-            _fetchAndCacheTarjetasTiempo(),
-          ]).then((_) => _iniciarPolling()).catchError((e) {
-            debugPrint('⚠️ Sync inicial: $e');
-            _iniciarPolling();
-          }),
-        );
+        // Ya hay caché: ir directo a WebSocket — el snapshot WS traerá
+        // los datos actualizados sin necesidad de HTTP adicional.
+        _iniciarWebSocket();
       }
     } catch (e) {
       debugPrint('Error en _loadUserAndData: $e');
@@ -727,7 +1108,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
       }
 
       final estaciones = await fetchEstacionamientos(token: _token).timeout(
-        const Duration(seconds: 15),
+        const Duration(seconds: 25),
         onTimeout: () {
           debugPrint('⏰ Timeout al obtener estacionamientos');
           throw TimeoutException(
@@ -736,16 +1117,19 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
         },
       );
 
-      estaciones.sort((a, b) => a.numero.compareTo(b.numero));
+      // Deduplicar por numero antes de cachear
+      final seen = <int>{};
+      final dedup = estaciones.where((e) => seen.add(e.numero)).toList();
+      dedup.sort((a, b) => a.numero.compareTo(b.numero));
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(
         'estacionamientos',
-        json.encode(estaciones.map((e) => e.toJson()).toList()),
+        json.encode(dedup.map((e) => e.toJson()).toList()),
       );
 
       if (mounted && !_appEnSegundoPlano) {
         setState(() {
-          _estaciones = estaciones;
+          _estaciones = dedup;
           _filteredEstaciones = _filterEstaciones(_searchQuery);
           _rangedEstaciones = _computeRangedEstaciones(_filteredEstaciones);
         });
@@ -777,7 +1161,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
       }
 
       final tarjetas = await fetchEstacionamientoTarjeta(token: _token).timeout(
-        const Duration(seconds: 15),
+        const Duration(seconds: 25),
         onTimeout: () {
           debugPrint('⏰ Timeout al obtener estacionamientos tarjeta');
           throw TimeoutException(
@@ -883,7 +1267,11 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
     } catch (e) {
       debugPrint('❌ Error al liberar estacionamiento expirado $estacionId: $e');
     } finally {
-      _enProceso.remove(estacionId);
+      // Mantener guardia 2s para que el WS broadcast llegue
+      Future.delayed(
+        const Duration(seconds: 2),
+        () => _enProceso.remove(estacionId),
+      );
     }
   }
 
@@ -1084,26 +1472,32 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
   }
 
   /// Persiste el estado actual de estacionamientos y tarjetas en SharedPreferences.
+  /// Usa debounce de 2 segundos para no escribir a disco en cada evento WS.
   Future<void> _persistirCacheCompleto() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(
-        'estacionamientos',
-        json.encode(_estaciones.map((e) => e.toJson()).toList()),
-      );
-      await prefs.setString(
-        'estacionamientos_tarjeta',
-        json.encode(_estacionamientosTarjeta.map((e) => e.toJson()).toList()),
-      );
-      if (_tiemposTarjeta.isNotEmpty) {
+    _persistDebounce?.cancel();
+    _persistDebounce = Timer(const Duration(seconds: 2), () async {
+      try {
+        final prefs = await SharedPreferences.getInstance();
         await prefs.setString(
-          'tarjetas_tiempo',
-          json.encode(_tiemposTarjeta.map((k, v) => MapEntry(k.toString(), v))),
+          'estacionamientos',
+          json.encode(_estaciones.map((e) => e.toJson()).toList()),
         );
+        await prefs.setString(
+          'estacionamientos_tarjeta',
+          json.encode(_estacionamientosTarjeta.map((e) => e.toJson()).toList()),
+        );
+        if (_tiemposTarjeta.isNotEmpty) {
+          await prefs.setString(
+            'tarjetas_tiempo',
+            json.encode(
+              _tiemposTarjeta.map((k, v) => MapEntry(k.toString(), v)),
+            ),
+          );
+        }
+      } catch (e) {
+        debugPrint('⚠️ Error al persistir caché: $e');
       }
-    } catch (e) {
-      debugPrint('⚠️ Error al persistir caché: $e');
-    }
+    });
   }
 
   void _updateUIAfterChange(int estacionId, bool nuevoEstado, String placa) {
@@ -1140,23 +1534,29 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
 
   Widget _infoChip(IconData icon, String label, Color color) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withValues(alpha: 0.3)),
+        gradient: LinearGradient(
+          colors: [
+            color.withValues(alpha: 0.10),
+            color.withValues(alpha: 0.04),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 14, color: color),
-          const SizedBox(width: 4),
+          Icon(icon, size: 16, color: color),
+          const SizedBox(width: 6),
           Text(
             label,
             style: TextStyle(
               fontSize: 13,
               color: color,
-              fontWeight: FontWeight.w600,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.3,
             ),
           ),
         ],
@@ -1169,40 +1569,159 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
     final Color barColor = pct > 0.5
         ? const Color(0xFF00C853)
         : pct > 0.2
-        ? Colors.orange
-        : Colors.red;
+        ? const Color(0xFFFF9100)
+        : const Color(0xFFFF1744);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(
-              'Saldo tarjeta',
-              style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+            Icon(
+              Icons.account_balance_wallet_rounded,
+              size: 14,
+              color: barColor,
             ),
+            const SizedBox(width: 5),
+            Text(
+              'Saldo',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey.shade600,
+              ),
+            ),
+            const Spacer(),
             Text(
               '$minutosRestantes / 120 min',
               style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
                 color: barColor,
               ),
             ),
           ],
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 5),
         ClipRRect(
-          borderRadius: BorderRadius.circular(4),
+          borderRadius: BorderRadius.circular(5),
           child: LinearProgressIndicator(
             value: pct,
             backgroundColor: Colors.grey.shade200,
             valueColor: AlwaysStoppedAnimation<Color>(barColor),
-            minHeight: 6,
+            minHeight: 7,
           ),
         ),
       ],
     );
+  }
+
+  List<Widget> _buildReservadoContent(Estacionamiento estacion) {
+    final dir = estacion.direccion;
+    // Extraer nombre del reservante de paréntesis: "AVDA X (Juan Pérez)"
+    String? reservadoPor;
+    String direccionLimpia = dir;
+    final regExp = RegExp(r'\((.+?)\)');
+    final match = regExp.firstMatch(dir);
+    if (match != null) {
+      reservadoPor = match.group(1)?.trim();
+      direccionLimpia = dir.replaceAll(regExp, '').trim();
+      // Limpiar guiones sueltos al final
+      if (direccionLimpia.endsWith('-')) {
+        direccionLimpia = direccionLimpia
+            .substring(0, direccionLimpia.length - 1)
+            .trim();
+      }
+    }
+
+    return [
+      Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1565C0).withValues(alpha: 0.05),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: const Color(0xFF1565C0).withValues(alpha: 0.15),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Dirección completa
+            if (direccionLimpia.isNotEmpty) ...[
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.location_on_rounded,
+                    size: 16,
+                    color: const Color(0xFF1565C0).withValues(alpha: 0.7),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      direccionLimpia,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.grey.shade700,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            // Nombre del reservante
+            if (reservadoPor != null && reservadoPor.isNotEmpty) ...[
+              if (direccionLimpia.isNotEmpty) const SizedBox(height: 8),
+              Row(
+                children: [
+                  Icon(
+                    Icons.person_rounded,
+                    size: 16,
+                    color: const Color(0xFF1565C0).withValues(alpha: 0.7),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      reservadoPor,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: Color(0xFF1565C0),
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            // Si no hay info extra, mostrar mensaje genérico
+            if ((direccionLimpia.isEmpty || direccionLimpia == dir) &&
+                (reservadoPor == null || reservadoPor.isEmpty)) ...[
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.lock_clock_rounded,
+                    size: 16,
+                    color: const Color(0xFF1565C0).withValues(alpha: 0.5),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Espacio reservado',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: const Color(0xFF1565C0).withValues(alpha: 0.7),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    ];
   }
 
   Widget _buildEstacionCard(Estacionamiento estacion) {
@@ -1224,11 +1743,20 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
       ),
     );
 
+    // Paleta de colores más imponente
     final Color accentColor = estaDeshabilitado
-        ? disabledColor
+        ? const Color(0xFF1565C0) // Azul profundo
         : ocupado
-        ? Colors.redAccent
-        : const Color(0xFF00C853);
+        ? const Color(0xFFC62828) // Rojo intenso
+        : const Color(0xFF2E7D32); // Verde bosque
+
+    final Color headerGradientStart = estaDeshabilitado
+        ? const Color(0xFF1565C0)
+        : ocupado
+        ? const Color(0xFF880E4F) // Magenta oscuro
+        : const Color(0xFF1B5E20); // Verde profundo
+
+    final Color headerGradientEnd = accentColor;
 
     final int minutosConsumidos = tarjetaInfo.t != 0
         ? _minutosConsumidosTarjeta(tarjetaInfo.t)
@@ -1236,373 +1764,489 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
     final int minutosRestantes = (120 - minutosConsumidos).clamp(0, 120);
 
     return Card(
-      elevation: 2,
-      shadowColor: accentColor.withValues(alpha: 0.25),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
-        side: BorderSide(color: accentColor.withValues(alpha: 0.4), width: 1.5),
-      ),
-      color: accentColor.withValues(alpha: 0.04),
+      elevation: 4,
+      shadowColor: accentColor.withValues(alpha: 0.35),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(14),
-        child: IntrinsicHeight(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Franja lateral de color
-              Container(width: 6, color: accentColor),
-
-              // Contenido principal
-              Expanded(
-                child: InkWell(
-                  borderRadius: const BorderRadius.horizontal(
-                    right: Radius.circular(14),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // ── Encabezado con gradiente ─────────────────────────────
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [headerGradientStart, headerGradientEnd],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+            ),
+            child: Row(
+              children: [
+                // Círculo con número
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.2),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.6),
+                      width: 2,
+                    ),
                   ),
-                  onTap: (!ocupado && !estaDeshabilitado)
-                      ? () {
-                          if (_usuario == null) {
-                            _showCustomSnackBar(
-                              'Error: Usuario no disponible',
-                              isError: true,
-                            );
-                            return;
-                          }
-                          _showRegistroForm(context, estacion);
-                        }
-                      : null,
-                  child: Container(
-                    color: Colors.transparent,
-                    padding: const EdgeInsets.all(14),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // ── Encabezado ──────────────────────────────────
+                  child: Center(
+                    child: Text(
+                      '#${estacion.numero}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                // Dirección con icono
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.local_parking_rounded,
+                            size: 16,
+                            color: Colors.white70,
+                          ),
+                          const SizedBox(width: 4),
+                          Flexible(
+                            child: Text(
+                              'Espacio #${estacion.numero}',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 15,
+                                color: Colors.white,
+                                letterSpacing: 0.3,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (estacion.direccion.isNotEmpty) ...[
+                        const SizedBox(height: 2),
                         Row(
                           children: [
-                            // Círculo con número
-                            Container(
-                              width: 46,
-                              height: 46,
-                              decoration: BoxDecoration(
-                                color: accentColor.withValues(alpha: 0.1),
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: accentColor,
-                                  width: 2,
-                                ),
-                              ),
-                              child: Center(
-                                child: Text(
-                                  '#${estacion.numero}',
-                                  style: TextStyle(
-                                    color: accentColor,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 13,
-                                  ),
-                                ),
-                              ),
+                            Icon(
+                              Icons.location_on_rounded,
+                              size: 12,
+                              color: Colors.white.withValues(alpha: 0.7),
                             ),
-                            const SizedBox(width: 12),
-                            // Nombre y dirección
+                            const SizedBox(width: 3),
                             Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'Espacio #${estacion.numero}',
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 15,
-                                      color: Color(0xFF001F54),
-                                    ),
-                                  ),
-                                  if (estacion.direccion.isNotEmpty)
-                                    Text(
-                                      estacion.direccion,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.grey.shade600,
-                                      ),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                ],
-                              ),
-                            ),
-                            // Badge de estado
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: accentColor.withValues(alpha: 0.1),
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(
-                                  color: accentColor.withValues(alpha: 0.5),
-                                ),
-                              ),
                               child: Text(
-                                estaDeshabilitado
-                                    ? 'N/D'
-                                    : ocupado
-                                    ? 'OCUPADO'
-                                    : 'LIBRE',
+                                estacion.direccion,
                                 style: TextStyle(
-                                  color: accentColor,
-                                  fontWeight: FontWeight.w700,
                                   fontSize: 11,
+                                  color: Colors.white.withValues(alpha: 0.85),
+                                  fontWeight: FontWeight.w500,
                                 ),
+                                overflow: TextOverflow.ellipsis,
                               ),
                             ),
                           ],
                         ),
+                      ],
+                    ],
+                  ),
+                ),
+                // Badge estado
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.15),
+                        blurRadius: 4,
+                        offset: const Offset(0, 1),
+                      ),
+                    ],
+                  ),
+                  child: Icon(
+                    estaDeshabilitado
+                        ? Icons.lock_rounded
+                        : ocupado
+                        ? Icons.block_rounded
+                        : Icons.check_circle_rounded,
+                    size: 15,
+                    color: accentColor,
+                  ),
+                ),
+              ],
+            ),
+          ),
 
-                        // ── Vehículo ocupado ────────────────────────────
-                        if (ocupado &&
-                            !estaDeshabilitado &&
-                            estacion.placa.isNotEmpty) ...[
-                          const SizedBox(height: 10),
-                          const Divider(height: 1, thickness: 1),
-                          const SizedBox(height: 10),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 6,
-                            children: [
-                              _infoChip(
-                                Icons.directions_car_rounded,
-                                estacion.placa,
-                                Colors.grey.shade700,
-                              ),
-                              if (tarjetaInfo.t != 0)
-                                _infoChip(
-                                  Icons.credit_card_rounded,
-                                  'Tarjeta #${tarjetaInfo.t}',
-                                  primaryColor,
-                                ),
-                            ],
+          // ── Contenido ────────────────────────────────────────────
+          InkWell(
+            onTap: (!ocupado && !estaDeshabilitado)
+                ? () {
+                    if (_usuario == null) {
+                      _showCustomSnackBar(
+                        'Error: Usuario no disponible',
+                        isError: true,
+                      );
+                      return;
+                    }
+                    _showRegistroForm(context, estacion);
+                  }
+                : null,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // ── Reservado: info detallada ─────────────────────
+                  if (estaDeshabilitado) ...[
+                    // Extraer nombre del reservante de los paréntesis
+                    ..._buildReservadoContent(estacion),
+                  ],
+
+                  // ── Vehículo ocupado ──────────────────────────────
+                  if (ocupado &&
+                      !estaDeshabilitado &&
+                      estacion.placa.isNotEmpty) ...[
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 6,
+                      children: [
+                        _infoChip(
+                          Icons.directions_car_filled_rounded,
+                          estacion.placa,
+                          const Color(0xFF37474F),
+                        ),
+                        if (tarjetaInfo.t != 0)
+                          _infoChip(
+                            Icons.credit_card_rounded,
+                            '#${tarjetaInfo.t}',
+                            const Color(0xFF0D47A1),
                           ),
-                          // Barra saldo de tarjeta
-                          if (tarjetaInfo.t != 0) ...[
-                            const SizedBox(height: 10),
-                            _buildMinutosRestantesBarra(minutosRestantes),
-                          ],
-                        ],
+                      ],
+                    ),
+                    // Barra saldo de tarjeta
+                    if (tarjetaInfo.t != 0) ...[
+                      const SizedBox(height: 12),
+                      _buildMinutosRestantesBarra(minutosRestantes),
+                    ],
+                  ],
 
-                        // ── Horario ─────────────────────────────────────
-                        if (ocupado &&
-                            tarjetaInfo.horaEntrada.isNotEmpty &&
-                            !estaDeshabilitado) ...[
-                          const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              Icon(
-                                Icons.login_rounded,
-                                size: 14,
-                                color: Colors.green.shade700,
+                  // ── Horario ───────────────────────────────────────
+                  if (ocupado &&
+                      tarjetaInfo.horaEntrada.isNotEmpty &&
+                      !estaDeshabilitado) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade50,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.grey.shade200),
+                      ),
+                      child: Row(
+                        children: [
+                          // Entrada
+                          Icon(
+                            Icons.arrow_circle_right_rounded,
+                            size: 18,
+                            color: Colors.green.shade700,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            tarjetaInfo.horaEntrada.length >= 5
+                                ? tarjetaInfo.horaEntrada.substring(0, 5)
+                                : tarjetaInfo.horaEntrada,
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.green.shade800,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Icon(
+                            Icons.arrow_forward_rounded,
+                            size: 14,
+                            color: Colors.grey.shade400,
+                          ),
+                          const SizedBox(width: 10),
+                          // Salida
+                          Icon(
+                            Icons.arrow_circle_left_rounded,
+                            size: 18,
+                            color: Colors.red.shade700,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            tarjetaInfo.horaSalida.length >= 5
+                                ? tarjetaInfo.horaSalida.substring(0, 5)
+                                : tarjetaInfo.horaSalida,
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.red.shade800,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const Spacer(),
+                          // Duración
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: [
+                                  const Color(0xFF0D47A1),
+                                  const Color(0xFF1565C0),
+                                ],
                               ),
-                              const SizedBox(width: 4),
-                              Text(
-                                tarjetaInfo.horaEntrada.length >= 5
-                                    ? tarjetaInfo.horaEntrada.substring(0, 5)
-                                    : tarjetaInfo.horaEntrada,
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: Colors.green.shade700,
-                                  fontWeight: FontWeight.w600,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.schedule_rounded,
+                                  size: 13,
+                                  color: Colors.white,
                                 ),
-                              ),
-                              const SizedBox(width: 12),
-                              Icon(
-                                Icons.logout_rounded,
-                                size: 14,
-                                color: Colors.red.shade700,
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                tarjetaInfo.horaSalida.length >= 5
-                                    ? tarjetaInfo.horaSalida.substring(0, 5)
-                                    : tarjetaInfo.horaSalida,
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: Colors.red.shade700,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const Spacer(),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 3,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.blue.shade50,
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Text(
+                                const SizedBox(width: 4),
+                                Text(
                                   '${tarjetaInfo.tiempo} min',
-                                  style: TextStyle(
+                                  style: const TextStyle(
                                     fontSize: 12,
-                                    color: Colors.blue.shade700,
-                                    fontWeight: FontWeight.w600,
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w700,
                                   ),
                                 ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          _CountdownTicker(
-                            horaSalida: tarjetaInfo.horaSalida,
-                            fecha: tarjetaInfo.fecha,
-                            tiempoTotalMinutos: tarjetaInfo.tiempo,
-                            onExpired: () =>
-                                _liberarEstacionamientoExpirado(estacion.id),
-                          ),
-                        ],
-
-                        // ── Botón Liberar ────────────────────────────────
-                        if (ocupado && !estaDeshabilitado) ...[
-                          const SizedBox(height: 10),
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: ElevatedButton.icon(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: primaryColor,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 18,
-                                  vertical: 10,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                elevation: 0,
-                              ),
-                              icon: estaLiberando
-                                  ? const SizedBox(
-                                      width: 16,
-                                      height: 16,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: Colors.white,
-                                      ),
-                                    )
-                                  : const Icon(
-                                      Icons.exit_to_app_rounded,
-                                      size: 18,
-                                    ),
-                              label: Text(
-                                estaLiberando ? 'Liberando...' : 'Liberar',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 13,
-                                ),
-                              ),
-                              onPressed: estaLiberando
-                                  ? null
-                                  : () async {
-                                      setState(() {
-                                        _estacionamientosLiberando[estacion
-                                                .id] =
-                                            true;
-                                      });
-
-                                      final tarjetaPrevia =
-                                          _estacionamientosTarjeta
-                                              .where(
-                                                (t) =>
-                                                    t.estacionId == estacion.id,
-                                              )
-                                              .toList();
-
-                                      _enProceso.add(estacion.id);
-
-                                      try {
-                                        _updateUIAfterChange(
-                                          estacion.id,
-                                          false,
-                                          '',
-                                        );
-                                        setState(() {
-                                          _estacionamientosTarjeta.removeWhere(
-                                            (t) => t.estacionId == estacion.id,
-                                          );
-                                        });
-                                        await _persistirCacheCompleto();
-                                        await actualizarRegistro(
-                                          estacionId: estacion.id,
-                                          placa: '',
-                                          estado: false,
-                                          token: _token,
-                                        );
-                                        _fetchAndCacheEstacionamientosTarjeta();
-                                        _showCustomSnackBar(
-                                          'Estacionamiento #${estacion.numero} liberado correctamente',
-                                        );
-                                      } catch (e) {
-                                        _updateUIAfterChange(
-                                          estacion.id,
-                                          true,
-                                          estacion.placa,
-                                        );
-                                        setState(() {
-                                          _estacionamientosTarjeta.addAll(
-                                            tarjetaPrevia,
-                                          );
-                                        });
-                                        unawaited(_persistirCacheCompleto());
-                                        _showCustomSnackBar(
-                                          'Error al liberar: $e',
-                                          isError: true,
-                                        );
-                                      } finally {
-                                        if (mounted) {
-                                          setState(() {
-                                            _estacionamientosLiberando.remove(
-                                              estacion.id,
-                                            );
-                                          });
-                                        }
-                                        _enProceso.remove(estacion.id);
-                                      }
-                                    },
+                              ],
                             ),
                           ),
                         ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    _CountdownTicker(
+                      horaSalida: tarjetaInfo.horaSalida,
+                      fecha: tarjetaInfo.fecha,
+                      tiempoTotalMinutos: tarjetaInfo.tiempo,
+                      onExpired: () =>
+                          _liberarEstacionamientoExpirado(estacion.id),
+                    ),
+                  ],
 
-                        // ── Libre: hint de toque ─────────────────────────
-                        if (!ocupado && !estaDeshabilitado) ...[
-                          const SizedBox(height: 10),
-                          const Divider(height: 1, thickness: 1),
-                          const SizedBox(height: 8),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                Icons.touch_app_rounded,
-                                size: 14,
-                                color: Colors.green.shade400,
+                  // ── Botón Liberar ──────────────────────────────────
+                  if (ocupado && !estaDeshabilitado) ...[
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        // Usuario que registró
+                        if (tarjetaInfo.usuario > 0) ...[
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 5,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(
+                                0xFF4A148C,
+                              ).withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: const Color(
+                                  0xFF4A148C,
+                                ).withValues(alpha: 0.3),
                               ),
-                              const SizedBox(width: 4),
-                              Text(
-                                'Toca para registrar',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.green.shade400,
-                                  fontStyle: FontStyle.italic,
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.person_rounded,
+                                  size: 14,
+                                  color: Color(0xFF4A148C),
                                 ),
-                              ),
-                            ],
+                                const SizedBox(width: 5),
+                                Text(
+                                  _nombresUsuarios[tarjetaInfo.usuario] ??
+                                      'ID ${tarjetaInfo.usuario}',
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: Color(0xFF4A148C),
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ],
+                        const Spacer(),
+                        ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF0D47A1),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 11,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            elevation: 2,
+                            shadowColor: const Color(
+                              0xFF0D47A1,
+                            ).withValues(alpha: 0.4),
+                          ),
+                          icon: estaLiberando
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Icon(Icons.exit_to_app_rounded, size: 18),
+                          label: Text(
+                            estaLiberando ? 'Liberando...' : 'Liberar',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13,
+                              letterSpacing: 0.3,
+                            ),
+                          ),
+                          onPressed: estaLiberando
+                              ? null
+                              : () async {
+                                  setState(() {
+                                    _estacionamientosLiberando[estacion.id] =
+                                        true;
+                                  });
+
+                                  final tarjetaPrevia = _estacionamientosTarjeta
+                                      .where((t) => t.estacionId == estacion.id)
+                                      .toList();
+
+                                  _enProceso.add(estacion.id);
+
+                                  try {
+                                    _updateUIAfterChange(
+                                      estacion.id,
+                                      false,
+                                      '',
+                                    );
+                                    setState(() {
+                                      _estacionamientosTarjeta.removeWhere(
+                                        (t) => t.estacionId == estacion.id,
+                                      );
+                                    });
+                                    await _persistirCacheCompleto();
+                                    await actualizarRegistro(
+                                      estacionId: estacion.id,
+                                      placa: '',
+                                      estado: false,
+                                      token: _token,
+                                    );
+                                    _fetchAndCacheEstacionamientosTarjeta();
+                                    _showCustomSnackBar(
+                                      'Estacionamiento #${estacion.numero} liberado correctamente',
+                                    );
+                                  } catch (e) {
+                                    _updateUIAfterChange(
+                                      estacion.id,
+                                      true,
+                                      estacion.placa,
+                                    );
+                                    setState(() {
+                                      _estacionamientosTarjeta.addAll(
+                                        tarjetaPrevia,
+                                      );
+                                    });
+                                    unawaited(_persistirCacheCompleto());
+                                    _showCustomSnackBar(
+                                      'Error al liberar: $e',
+                                      isError: true,
+                                    );
+                                  } finally {
+                                    if (mounted) {
+                                      setState(() {
+                                        _estacionamientosLiberando.remove(
+                                          estacion.id,
+                                        );
+                                      });
+                                    }
+                                    Future.delayed(
+                                      const Duration(seconds: 2),
+                                      () => _enProceso.remove(estacion.id),
+                                    );
+                                  }
+                                },
+                        ),
                       ],
                     ),
-                  ),
-                ),
+                  ],
+
+                  // ── Libre: hint de toque ───────────────────────────
+                  if (!ocupado && !estaDeshabilitado) ...[
+                    const SizedBox(height: 6),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF2E7D32).withValues(alpha: 0.06),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: const Color(0xFF2E7D32).withValues(alpha: 0.2),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.add_circle_rounded,
+                            size: 18,
+                            color: const Color(
+                              0xFF2E7D32,
+                            ).withValues(alpha: 0.7),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Toca para registrar vehículo',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: const Color(
+                                0xFF2E7D32,
+                              ).withValues(alpha: 0.8),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
               ),
-            ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -1695,7 +2339,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
                     padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
                     decoration: const BoxDecoration(
                       gradient: LinearGradient(
-                        colors: [Color(0xFF001F54), Color(0xFF5E17EB)],
+                        colors: [Color(0xFF0A1628), Color(0xFF000000)],
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
                       ),
@@ -1870,6 +2514,11 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
                               controller: placaController,
                               label: "Placa (ABC1234)",
                               icon: Icons.directions_car,
+                              onChanged: (_) {
+                                if (errorModal != null) {
+                                  setStateModal(() => errorModal = null);
+                                }
+                              },
                             ),
                             const SizedBox(height: 20),
 
@@ -1903,8 +2552,8 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
                                       gradient: selected
                                           ? const LinearGradient(
                                               colors: [
-                                                Color(0xFF001F54),
-                                                Color(0xFF5E17EB),
+                                                Color(0xFF0A1628),
+                                                Color(0xFF1565C0),
                                               ],
                                             )
                                           : null,
@@ -1962,9 +2611,10 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
                                     controller: horaEntradaController,
                                     label: "Entrada",
                                     icon: Icons.login_rounded,
-                                    onChanged: (_) => setStateModal(
-                                      () => calcularHoraSalida(),
-                                    ),
+                                    onChanged: (_) => setStateModal(() {
+                                      calcularHoraSalida();
+                                      errorModal = null;
+                                    }),
                                   ),
                                 ),
                                 Padding(
@@ -2108,8 +2758,8 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
                               gradient: errorModal == null
                                   ? const LinearGradient(
                                       colors: [
-                                        Color(0xFF001F54),
-                                        Color(0xFF5E17EB),
+                                        Color(0xFF0A1628),
+                                        Color(0xFF1565C0),
                                       ],
                                       begin: Alignment.centerLeft,
                                       end: Alignment.centerRight,
@@ -2246,31 +2896,39 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
                                       // 3. Sincronizar con el servidor en background
                                       unawaited(() async {
                                         try {
-                                          await registarEstacionamientoTarjeta(
-                                            nuevoRegistro,
-                                            token: _token,
-                                          );
-                                          // Sincronizar tiempo real de la tarjeta
-                                          // (recalculado desde todos los registros locales)
+                                          // Ejecutar registro de tarjeta y actualización de estación
+                                          // en PARALELO para que el broadcast WS salga más rápido
+                                          await Future.wait([
+                                            registarEstacionamientoTarjeta(
+                                              nuevoRegistro,
+                                              token: _token,
+                                            ),
+                                            actualizarRegistro(
+                                              estacionId: estacionCapturado.id,
+                                              placa: placa,
+                                              estado: true,
+                                              token: _token,
+                                            ),
+                                          ]);
+                                          // Actualizar tiempo de tarjeta después
                                           final totalConsumido =
                                               _minutosConsumidosTarjeta(
                                                 tarjeta,
                                               );
-                                          await actualizarTiempoTarjeta(
-                                            tarjeta,
-                                            totalConsumido,
-                                            token: _token,
+                                          unawaited(
+                                            actualizarTiempoTarjeta(
+                                              tarjeta,
+                                              totalConsumido,
+                                              token: _token,
+                                            ),
                                           );
-                                          await actualizarRegistro(
-                                            estacionId: estacionCapturado.id,
-                                            placa: placa,
-                                            estado: true,
-                                            token: _token,
-                                          );
-                                          // Servidor confirmó → ya es seguro permitir que
-                                          // el polling sobreescriba este espacio.
-                                          _enProceso.remove(
-                                            estacionCapturado.id,
+                                          // Mantener guardia 2s para que el WS
+                                          // broadcast llegue a otros dispositivos
+                                          Future.delayed(
+                                            const Duration(seconds: 2),
+                                            () => _enProceso.remove(
+                                              estacionCapturado.id,
+                                            ),
                                           );
                                           _fetchAndCacheEstacionamientosTarjeta();
                                         } catch (e) {
@@ -2360,14 +3018,14 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
   Widget _sectionLabel(String text, IconData icon) {
     return Row(
       children: [
-        Icon(icon, size: 16, color: const Color(0xFF5E17EB)),
+        Icon(icon, size: 16, color: const Color(0xFF1565C0)),
         const SizedBox(width: 6),
         Text(
           text,
           style: const TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w700,
-            color: Color(0xFF001F54),
+            color: Color(0xFF0A1628),
             letterSpacing: 0.3,
           ),
         ),
@@ -2379,14 +3037,14 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 16, color: const Color(0xFF5E17EB)),
+        Icon(icon, size: 16, color: const Color(0xFF1565C0)),
         const SizedBox(height: 3),
         Text(
           text,
           style: const TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w700,
-            color: Color(0xFF001F54),
+            color: Color(0xFF0A1628),
           ),
         ),
       ],
@@ -2403,7 +3061,6 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
     Function(String)? onChanged,
   }) {
     final size = MediaQuery.of(context).size;
-    String? errorText;
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
@@ -2415,6 +3072,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
             ? TextCapitalization.characters
             : TextCapitalization.none,
         keyboardType: keyboardType,
+        autovalidateMode: AutovalidateMode.onUserInteraction,
         inputFormatters: label == "Placa (ABC1234)"
             ? [
                 FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9]')),
@@ -2425,17 +3083,6 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
             ? [FilteringTextInputFormatter.digitsOnly]
             : null,
         onChanged: (value) {
-          if (label == "Placa (ABC1234)") {
-            final upper = value.toUpperCase();
-            final regex = RegExp(r'^[A-Z]{3}\d{4}$');
-            setState(() {
-              errorText = upper.length < 7
-                  ? null
-                  : regex.hasMatch(upper)
-                  ? null
-                  : 'Formato inválido. Debe ser ABC1234';
-            });
-          }
           if (onChanged != null) onChanged(value);
         },
         decoration: InputDecoration(
@@ -2452,7 +3099,6 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
             borderRadius: BorderRadius.circular(12),
             borderSide: BorderSide(color: primaryColor, width: 2),
           ),
-          errorText: errorText,
           counterText: label == "Placa (ABC1234)" ? "" : null,
           contentPadding: EdgeInsets.symmetric(
             horizontal: 16,
@@ -2556,12 +3202,77 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
     );
   }
 
+  void _mostrarInfo(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Color(0xFF0A1628), Color(0xFF000000)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.info_outline, color: Colors.white, size: 24),
+                  SizedBox(width: 10),
+                  Text(
+                    'Información',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Control de Tarjetas',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Muestra el estado de ocupación de los espacios de estacionamiento y permite gestionar el ingreso y salida de vehículos.',
+                    style: TextStyle(color: Colors.grey[700], fontSize: 14),
+                  ),
+                  const SizedBox(height: 20),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Entendido'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
     return Scaffold(
-      backgroundColor: const Color(0xFFF0F4FF),
       appBar: AppBar(
+        centerTitle: true,
         title: const Text(
           "Control de Tarjetas",
           style: TextStyle(fontWeight: FontWeight.bold),
@@ -2573,13 +3284,18 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
         flexibleSpace: Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(
-              colors: [Color(0xFF001F54), Color(0xFF5E17EB)],
+              colors: [Color(0xFF0A1628), Color(0xFF000000)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
           ),
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.info_outline),
+            tooltip: 'Información',
+            onPressed: () => _mostrarInfo(context),
+          ),
           if (_isRefreshing)
             const Padding(
               padding: EdgeInsets.symmetric(horizontal: 12),
@@ -2624,7 +3340,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
                       colors: hayOcupados
-                          ? [const Color(0xFF001F54), const Color(0xFF0D3278)]
+                          ? [const Color(0xFF0A1628), const Color(0xFF0D3278)]
                           : [Colors.green.shade700, Colors.green.shade600],
                       begin: Alignment.centerLeft,
                       end: Alignment.centerRight,
@@ -2857,13 +3573,13 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
                     dividerColor: Colors.transparent,
                     indicator: const UnderlineTabIndicator(
                       borderSide: BorderSide(
-                        color: Color(0xFF001F54),
+                        color: Color(0xFF0A1628),
                         width: 3,
                       ),
                       borderRadius: BorderRadius.all(Radius.circular(2)),
                     ),
                     indicatorSize: TabBarIndicatorSize.tab,
-                    labelColor: const Color(0xFF001F54),
+                    labelColor: const Color(0xFF0A1628),
                     unselectedLabelColor: Colors.grey,
                     labelPadding: EdgeInsets.zero,
                     tabs: [
@@ -2883,7 +3599,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
                         Colors.red.shade600,
                       ),
                       _buildTab(
-                        'N/D',
+                        'Reservados',
                         _estaciones.where((e) => _estaDeshabilitado(e)).length,
                         Colors.blue.shade600,
                       ),
@@ -2907,7 +3623,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
                             height: size.width * 0.28,
                             decoration: const BoxDecoration(
                               gradient: LinearGradient(
-                                colors: [Color(0xFF001F54), Color(0xFF5E17EB)],
+                                colors: [Color(0xFF0A1628), Color(0xFF000000)],
                                 begin: Alignment.topLeft,
                                 end: Alignment.bottomRight,
                               ),
@@ -2925,7 +3641,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
                             style: TextStyle(
                               fontSize: 22,
                               fontWeight: FontWeight.bold,
-                              color: Color(0xFF001F54),
+                              color: Color(0xFF0A1628),
                               letterSpacing: 3,
                             ),
                           ),
@@ -2946,7 +3662,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
                                 minHeight: 5,
                                 backgroundColor: Color(0xFFD0D9F0),
                                 valueColor: AlwaysStoppedAnimation<Color>(
-                                  Color(0xFF5E17EB),
+                                  Color(0xFF1565C0),
                                 ),
                               ),
                             ),
@@ -3169,7 +3885,7 @@ class _CountdownTicker extends StatefulWidget {
 class _CountdownTickerState extends State<_CountdownTicker> {
   static const Color _errorColor = Color(0xFFD32F2F);
   static const Color _warningColor = Color(0xFFFF9800);
-  static const Color _primaryColor = Color(0xFF001F54);
+  static const Color _primaryColor = Color(0xFF0A1628);
   static const Color _successColor = Color(0xFF00C853);
 
   late Duration _remaining;

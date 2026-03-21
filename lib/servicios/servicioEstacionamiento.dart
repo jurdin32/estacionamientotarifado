@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'package:estacionamientotarifado/tarjetas/models/Estacionamiento.dart';
-import 'package:http/http.dart' as http;
+import 'package:estacionamientotarifado/servicios/httpMonitorizado.dart';
 
 const String _urlEstacion =
     'https://simert.transitoelguabo.gob.ec/api/estacion/';
@@ -13,7 +13,7 @@ Uri _uriTkEstacion(String path, String token) {
 }
 
 Future<List<Estacionamiento>> fetchEstacionamientos({String token = ''}) async {
-  final response = await http.get(_uriTkEstacion('', token));
+  final response = await HttpMonitorizado.get(_uriTkEstacion('', token));
 
   if (response.statusCode == 200) {
     final List<dynamic> jsonData = json.decode(response.body);
@@ -38,7 +38,7 @@ Future<void> actualizarRegistro({
   });
 
   try {
-    final response = await http.put(
+    final response = await HttpMonitorizado.put(
       url,
       headers: {'Content-Type': 'application/json'},
       body: body,

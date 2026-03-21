@@ -46,6 +46,7 @@ dependencies:
   http_parser: ^4.1.2
   permission_handler: ^12.0.1
   event_bus: ^2.0.1
+  web_socket_channel: ^3.0.2
   connectivity_plus: ^7.0.0
   blue_thermal_printer: ^1.2.3
   image: ^4.2.0

@@ -1,5 +1,6 @@
-import 'dart:async' show unawaited;
+import 'dart:async';
 import 'package:estacionamientotarifado/servicios/servicioNotificaciones2.dart';
+import 'package:estacionamientotarifado/servicios/servicioWebSocket.dart';
 import 'package:estacionamientotarifado/tarjetas/models/Notificaciones2.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -34,8 +35,8 @@ class NotificacionesUsuarioScreen extends StatefulWidget {
 class _NotificacionesScreenState extends State<NotificacionesUsuarioScreen>
     with SingleTickerProviderStateMixin {
   // ─── Design tokens ────────────────────────────────────────────────────────
-  static const Color _colorPrimario = Color(0xFF001F54);
-  static const Color _colorSecundario = Color(0xFF5E17EB);
+  static const Color _colorPrimario = Color(0xFF0A1628);
+  static const Color _colorSecundario = Color(0xFF000000);
   static const Color _colorFondo = Color(0xFFF0F4FF);
   static const Color _colorTexto = Color(0xFF333333);
 
@@ -54,6 +55,7 @@ class _NotificacionesScreenState extends State<NotificacionesUsuarioScreen>
   String? _error;
   bool _mostrarSoloMesActual = true;
   String _operador = '';
+  StreamSubscription? _wsNotifSub;
 
   // ─── Lifecycle ────────────────────────────────────────────────────────────
   @override
@@ -62,10 +64,12 @@ class _NotificacionesScreenState extends State<NotificacionesUsuarioScreen>
     _tabController = TabController(length: 3, vsync: this);
     _mostrarSoloMesActual = widget.mostrarSoloMesActual;
     _cargar();
+    _suscribirWsNotificaciones();
   }
 
   @override
   void dispose() {
+    _wsNotifSub?.cancel();
     _tabController.dispose();
     super.dispose();
   }
@@ -166,19 +170,135 @@ class _NotificacionesScreenState extends State<NotificacionesUsuarioScreen>
     }
   }
 
+  void _suscribirWsNotificaciones() {
+    final ws = ServicioWebSocket.instancia;
+    ws.suscribir('notificaciones');
+
+    _wsNotifSub?.cancel();
+    _wsNotifSub = ws.escuchar('notificaciones').listen((evento) async {
+      if (!mounted) return;
+      if (evento.accion == 'snapshot' && evento.datos is List) {
+        try {
+          final lista = (evento.datos as List)
+              .whereType<Map<String, dynamic>>()
+              .map((j) => Notificacion.fromJson(j))
+              .toList();
+          final delMes = _mostrarSoloMesActual
+              ? _svc.filtrarNotificacionesMesActual(lista)
+              : lista;
+          final ordenadas = _ordenarLista(delMes);
+          final prefs = await SharedPreferences.getInstance();
+          final userId = prefs.getInt('id') ?? 0;
+          if (_mostrarSoloMesActual && userId > 0) {
+            unawaited(NotifMesCache.guardar(userId, delMes));
+          }
+          if (mounted) {
+            setState(() {
+              _notificaciones = ordenadas;
+              _grupos = _svc.agruparPorEstado(ordenadas);
+              _cargando = false;
+            });
+          }
+        } catch (_) {}
+      } else if (evento.accion == 'create' && evento.datos is Map) {
+        try {
+          final nueva = Notificacion.fromJson(
+            evento.datos as Map<String, dynamic>,
+          );
+          final prefs = await SharedPreferences.getInstance();
+          final userId = prefs.getInt('id') ?? 0;
+          if (nueva.usuario == userId) {
+            final actualizada = [nueva, ..._notificaciones];
+            final ordenadas = _ordenarLista(actualizada);
+            if (_mostrarSoloMesActual && userId > 0) {
+              unawaited(NotifMesCache.guardar(userId, ordenadas));
+            }
+            if (mounted) {
+              setState(() {
+                _notificaciones = ordenadas;
+                _grupos = _svc.agruparPorEstado(ordenadas);
+              });
+            }
+          }
+        } catch (_) {}
+      }
+    });
+  }
+
   void _alternarVista() {
     setState(() => _mostrarSoloMesActual = !_mostrarSoloMesActual);
     _cargar();
   }
 
-  // ─── Build ────────────────────────────────────────────────────────────────
+  void _mostrarInfo(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Color(0xFF0A1628), Color(0xFF000000)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.info_outline, color: Colors.white, size: 24),
+                  SizedBox(width: 10),
+                  Text(
+                    'Información',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Historial de Multas',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Muestra las multas pagadas, impagas e impugnadas organizadas por estado y período.',
+                    style: TextStyle(color: Colors.grey[700], fontSize: 14),
+                  ),
+                  const SizedBox(height: 20),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Entendido'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ─── Build ────────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: _colorFondo,
-      appBar: _buildAppBar(),
-      body: _buildBody(),
-    );
+    return Scaffold(appBar: _buildAppBar(), body: _buildBody());
   }
 
   // ─── AppBar ───────────────────────────────────────────────────────────────
@@ -202,6 +322,11 @@ class _NotificacionesScreenState extends State<NotificacionesUsuarioScreen>
         onPressed: () => Navigator.pop(context),
       ),
       actions: [
+        IconButton(
+          icon: const Icon(Icons.info_outline, color: Colors.white),
+          tooltip: 'Información',
+          onPressed: () => _mostrarInfo(context),
+        ),
         IconButton(
           icon: Icon(
             _mostrarSoloMesActual ? Icons.history : Icons.calendar_month,

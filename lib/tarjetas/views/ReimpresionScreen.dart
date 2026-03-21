@@ -20,7 +20,7 @@ class ReimpresionScreen extends StatefulWidget {
 
 class _ReimpresionScreenState extends State<ReimpresionScreen> {
   // ─── Design tokens ────────────────────────────────────────────────────────
-  static const Color _colorPrimario = Color(0xFF001F54);
+  static const Color _colorPrimario = Color(0xFF0A1628);
   static const Color _colorFondo = Color(0xFFF0F4FF);
   static const Color _colorTexto = Color(0xFF333333);
 
@@ -369,14 +369,75 @@ class _ReimpresionScreenState extends State<ReimpresionScreen> {
     }
   }
 
-  // ─── UI ──────────────────────────────────────────────────────────────────
+  void _mostrarInfo(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Color(0xFF0A1628), Color(0xFF000000)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.info_outline, color: Colors.white, size: 24),
+                  SizedBox(width: 10),
+                  Text(
+                    'Información',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Reimprimir Multa',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Permite reimprimir comprobantes de multas emitidas anteriormente. Seleccione la multa que desea reimprimir.',
+                    style: TextStyle(color: Colors.grey[700], fontSize: 14),
+                  ),
+                  const SizedBox(height: 20),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Entendido'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ─── UI ──────────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: _colorFondo,
-      appBar: _buildAppBar(),
-      body: _buildBody(),
-    );
+    return Scaffold(appBar: _buildAppBar(), body: _buildBody());
   }
 
   PreferredSizeWidget _buildAppBar() {
@@ -396,6 +457,11 @@ class _ReimpresionScreenState extends State<ReimpresionScreen> {
       ),
       actions: [
         IconButton(
+          icon: const Icon(Icons.info_outline, color: Colors.white),
+          tooltip: 'Información',
+          onPressed: () => _mostrarInfo(context),
+        ),
+        IconButton(
           icon: const Icon(Icons.refresh, color: Colors.white),
           tooltip: 'Forzar actualización desde servidor',
           onPressed: () => _cargar(forceRefresh: true),
@@ -406,7 +472,7 @@ class _ReimpresionScreenState extends State<ReimpresionScreen> {
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [Color(0xFF001F54), Color(0xFF5E17EB)],
+            colors: [Color(0xFF0A1628), Color(0xFF000000)],
           ),
         ),
       ),
@@ -544,7 +610,7 @@ class _ReimpresionScreenState extends State<ReimpresionScreen> {
             padding: const EdgeInsets.all(24),
             decoration: const BoxDecoration(
               gradient: LinearGradient(
-                colors: [_colorPrimario, Color(0xFF5E17EB)],
+                colors: [_colorPrimario, Color(0xFF000000)],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
@@ -577,7 +643,7 @@ class _ReimpresionScreenState extends State<ReimpresionScreen> {
             child: LinearProgressIndicator(
               backgroundColor: Colors.grey.shade200,
               valueColor: const AlwaysStoppedAnimation<Color>(
-                Color(0xFF5E17EB),
+                Color(0xFF1565C0),
               ),
               minHeight: 3,
               borderRadius: BorderRadius.circular(4),

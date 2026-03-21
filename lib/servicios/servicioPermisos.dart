@@ -182,17 +182,27 @@ class PermissionsService {
 
   // ── API pública ───────────────────────────────────────────────────────────
 
-  /// Obtiene permisos: API → caché → default.
+  /// Obtiene permisos: caché → default (inmediato), API en background para próxima vez.
   static Future<Map<String, bool>> getPermisos(int userId) async {
-    // 1. Intenta la API
+    // 1. Caché local primero (instantáneo, sin red)
+    final cache = await _leerCache(userId);
+    if (cache != null) {
+      // Refrescar desde API en background para la próxima vez
+      _fetchDeApi(userId)
+          .then((apiResult) {
+            if (apiResult != null) _guardarCache(userId, apiResult);
+          })
+          .catchError((_) {});
+      return cache;
+    }
+    // 2. Sin caché → intentar API
     final apiResult = await _fetchDeApi(userId);
     if (apiResult != null) {
-      await _guardarCache(userId, apiResult); // actualiza caché
+      await _guardarCache(userId, apiResult);
       return apiResult;
     }
-    // 2. Fallback a caché local
-    final cache = await _leerCache(userId);
-    return cache ?? defaultPermisos();
+    // 3. Fallback: permisos por defecto
+    return defaultPermisos();
   }
 
   /// Guarda permisos: primero en la API, luego en caché local.

@@ -1,18 +1,31 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'splash_screen.dart';
 import 'package:onesignal_flutter/onesignal_flutter.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  _initOneSignal();
   runApp(const MyApp());
-  OneSignal.Debug.setLogLevel(OSLogLevel.verbose);
-  // Initialize with your OneSignal App ID
-  OneSignal.initialize("26291df8-34b8-4fe8-8b1a-511a4fa8b95b");
-  // Use this method to prompt for push notifications.
-  // We recommend removing this method after testing and instead use In-App Messages to prompt for notification permission.
-  OneSignal.Notifications.requestPermission(true);
   requestCameraPermission();
   requestStoragePermission();
+}
+
+void _initOneSignal() {
+  // OneSignal solo funciona en Android/iOS
+  if (defaultTargetPlatform != TargetPlatform.android &&
+      defaultTargetPlatform != TargetPlatform.iOS) {
+    debugPrint('[OneSignal] Plataforma no soportada — omitiendo');
+    return;
+  }
+  try {
+    OneSignal.Debug.setLogLevel(OSLogLevel.verbose);
+    OneSignal.initialize("26291df8-34b8-4fe8-8b1a-511a4fa8b95b");
+    OneSignal.Notifications.requestPermission(true);
+  } catch (e) {
+    debugPrint('[OneSignal] Error al inicializar: $e');
+  }
 }
 
 // Para la cámara

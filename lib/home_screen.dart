@@ -1,10 +1,14 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:ui';
-import 'package:http/http.dart' as http;
+import 'package:estacionamientotarifado/servicios/httpMonitorizado.dart';
 import 'package:estacionamientotarifado/consultas/consultar_multas.dart';
 import 'package:estacionamientotarifado/consultas/credencial.dart';
 import 'package:estacionamientotarifado/servicios/servicioNotificaciones2.dart'
     as svc2;
+import 'package:estacionamientotarifado/servicios/servicioWebSocket.dart';
+import 'package:estacionamientotarifado/servicios/monitorDatos.dart';
+import 'package:estacionamientotarifado/consultas/monitor_datos_screen.dart';
 import 'package:estacionamientotarifado/tarjetas/views/EstacionamientoScreen.dart';
 import 'package:estacionamientotarifado/tarjetas/views/NotificacionScreen.dart';
 import 'package:estacionamientotarifado/tarjetas/views/Notificacionusuario.dart';
@@ -45,6 +49,9 @@ class _HomeScreenState extends State<HomeScreen>
   int _placasUnicasMes = 0;
   bool _metricasCargadas = false;
 
+  StreamSubscription? _wsMultasSub;
+  StreamSubscription? _wsTarjetasSub;
+
   late AnimationController _ctrl;
   late Animation<double> _fade;
 
@@ -76,14 +83,25 @@ class _HomeScreenState extends State<HomeScreen>
       _isSuperuser = superuser;
       _permisos = permisos;
     });
-    _cargarMetricas();
-    // Pre-calentar cachés en segundo plano
+    // Inicializar monitor de datos
+    MonitorDatos.instancia.inicializar();
     final token = prefs.getString('token') ?? '';
     final cookie = prefs.getString('session_cookie') ?? '';
-    EstacionesAdminScreen.preWarmCache(token: token, sessionCookie: cookie);
-    Notificacionesscreen.preWarmCache();
-    NotificacionesUsuarioScreen.preWarmCache(uid);
-    AdminUsuariosScreen.preWarmCache(token: token, sessionCookie: cookie);
+    // Iniciar WebSocket y suscribir canales para métricas en vivo
+    ServicioWebSocket.instancia.conectar(token: token);
+    _suscribirWsHome();
+    // Cargar métricas: caché instantáneo → HTTP como fallback solo si caché vacía
+    _cargarMetricas(prefs, token);
+    // Pre-calentar cachés de otras pantallas en segundo plano
+    // (cada preWarmCache verifica si ya hay caché y no hace HTTP si existe)
+    unawaited(
+      Future.wait([
+        EstacionesAdminScreen.preWarmCache(token: token, sessionCookie: cookie),
+        Notificacionesscreen.preWarmCache(),
+        NotificacionesUsuarioScreen.preWarmCache(uid),
+        AdminUsuariosScreen.preWarmCache(token: token, sessionCookie: cookie),
+      ]).catchError((_) => <void>[]),
+    );
   }
 
   bool _permitido(String key) {
@@ -91,148 +109,255 @@ class _HomeScreenState extends State<HomeScreen>
     return _permisos[key] ?? true;
   }
 
-  Future<void> _cargarMetricas() async {
+  /// Carga métricas con patrón cache-first → HTTP paralelo como fallback.
+  Future<void> _cargarMetricas(SharedPreferences prefs, String token) async {
+    final now = DateTime.now();
+
+    Uri uriTk(String path) {
+      final base = 'https://simert.transitoelguabo.gob.ec$path';
+      return token.isNotEmpty
+          ? Uri.parse(base).replace(queryParameters: {'_tk': token})
+          : Uri.parse(base);
+    }
+
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString('token') ?? '';
-      final uid = prefs.getInt('id') ?? 0;
-      final now = DateTime.now();
-
-      Uri uriTk(String path) {
-        final base = 'https://simert.transitoelguabo.gob.ec$path';
-        return token.isNotEmpty
-            ? Uri.parse(base).replace(queryParameters: {'_tk': token})
-            : Uri.parse(base);
-      }
-
-      // ── Multas ────────────────────────────────────────────────────────
-      List<Map<String, dynamic>> multas =
-          await svc2.CacheDetallesService.leerMes();
-
-      // Si la caché de notificaciones está vacía, intentar caché local de multas
+      // ═══ FASE 1: Caché → métricas visibles al instante ═══════════════
+      var multas = await svc2.CacheDetallesService.leerMes();
       if (multas.isEmpty) {
-        final multasRaw = prefs.getString('multas');
-        if (multasRaw != null) {
+        final raw = prefs.getString('multas');
+        if (raw != null) {
           try {
-            multas = (json.decode(multasRaw) as List)
+            multas = (json.decode(raw) as List)
                 .whereType<Map<String, dynamic>>()
                 .toList();
           } catch (_) {}
         }
       }
 
-      // Si aún vacío, consultar API con token
-      if (multas.isEmpty && token.isNotEmpty) {
-        try {
-          final resp = await http.get(uriTk('/api/details_multas'));
-          if (resp.statusCode == 200) {
-            final data = json.decode(resp.body);
-            if (data is List) {
-              multas = data.whereType<Map<String, dynamic>>().toList();
-            } else if (data is Map && data['results'] is List) {
-              multas = (data['results'] as List)
-                  .whereType<Map<String, dynamic>>()
-                  .toList();
-            }
-            if (multas.isNotEmpty) {
-              await prefs.setString('multas', json.encode(multas));
-            }
-          }
-        } catch (_) {}
-      }
-
-      // Filtrar multas del mes actual
-      final multasMes = multas.where((m) {
-        try {
-          final dt = DateTime.parse(m['fechaEmision'] as String);
-          return dt.year == now.year && dt.month == now.month;
-        } catch (_) {
-          return false;
-        }
-      }).toList();
-      final multasHoy = multasMes.where((m) {
-        try {
-          final dt = DateTime.parse(m['fechaEmision'] as String);
-          return dt.day == now.day;
-        } catch (_) {
-          return false;
-        }
-      }).length;
-
-      // ── Tarjetas ──────────────────────────────────────────────────────
       List<Map<String, dynamic>> tarjetas = [];
-      final cached = prefs.getString('estacionamientos_tarjeta');
-      if (cached != null) {
+      final cTarjetas = prefs.getString('estacionamientos_tarjeta');
+      if (cTarjetas != null) {
         try {
-          tarjetas = (json.decode(cached) as List)
+          tarjetas = (json.decode(cTarjetas) as List)
               .whereType<Map<String, dynamic>>()
               .toList();
         } catch (_) {}
       }
 
-      // Si no hay caché, consultar API con token
-      if (tarjetas.isEmpty && token.isNotEmpty) {
-        try {
-          final resp = await http.get(uriTk('/api/est_tarjeta/'));
-          if (resp.statusCode == 200) {
-            final data = json.decode(resp.body);
-            if (data is List) {
-              tarjetas = data.whereType<Map<String, dynamic>>().toList();
-            } else if (data is Map && data['results'] is List) {
-              tarjetas = (data['results'] as List)
-                  .whereType<Map<String, dynamic>>()
-                  .toList();
-            }
-            if (tarjetas.isNotEmpty) {
-              await prefs.setString(
-                'estacionamientos_tarjeta',
-                json.encode(tarjetas),
-              );
-            }
-          }
-        } catch (_) {}
-      }
+      // Mostrar métricas de caché de inmediato
+      _aplicarMultas(multas, now);
+      _aplicarTarjetas(tarjetas, now);
 
-      // Filtrar por usuario (superadmin ve todos; usuario normal ve solo los suyos)
-      final tarjetasUsuario = _isSuperuser
-          ? tarjetas
-          : tarjetas.where((t) => (t['usuario'] as int?) == uid).toList();
+      // ═══ FASE 2: HTTP en paralelo solo si la caché está vacía ════════
+      final faltaM = multas.isEmpty && token.isNotEmpty;
+      final faltaT = tarjetas.isEmpty && token.isNotEmpty;
 
-      final tarjetasMes = tarjetasUsuario.where((t) {
-        try {
-          final dt = DateTime.parse(t['fecha'] as String);
-          return dt.year == now.year && dt.month == now.month;
-        } catch (_) {
-          return false;
-        }
-      }).toList();
-      final tarjetasHoy = tarjetasMes.where((t) {
-        try {
-          final dt = DateTime.parse(t['fecha'] as String);
-          return dt.day == now.day;
-        } catch (_) {
-          return false;
-        }
-      }).length;
-      final placasUnicas = tarjetasMes
-          .map((t) => t['placa'] as String? ?? '')
-          .toSet()
-          .where((p) => p.isNotEmpty)
-          .length;
-
-      if (mounted) {
-        setState(() {
-          _totalMultasMes = multasMes.length;
-          _multasHoy = multasHoy;
-          _tarjetasMes = tarjetasMes.length;
-          _tarjetasHoy = tarjetasHoy;
-          _placasUnicasMes = placasUnicas;
-          _metricasCargadas = true;
-        });
+      if (faltaM || faltaT) {
+        final resultados = await Future.wait([
+          faltaM ? _fetchMultasHttp(uriTk, prefs) : Future.value(multas),
+          faltaT ? _fetchTarjetasHttp(uriTk, prefs) : Future.value(tarjetas),
+        ]);
+        if (faltaM) _aplicarMultas(resultados[0], now);
+        if (faltaT) _aplicarTarjetas(resultados[1], now);
       }
     } catch (_) {
       if (mounted) setState(() => _metricasCargadas = true);
     }
+  }
+
+  // ── Aplicar métricas por sección ─────────────────────────────────────────
+
+  void _aplicarMultas(List<Map<String, dynamic>> multas, DateTime now) {
+    final multasMes = multas.where((m) {
+      try {
+        final dt = DateTime.parse(m['fechaEmision'] as String);
+        return dt.year == now.year && dt.month == now.month;
+      } catch (_) {
+        return false;
+      }
+    }).toList();
+    final hoy = multasMes.where((m) {
+      try {
+        final dt = DateTime.parse(m['fechaEmision'] as String);
+        return dt.day == now.day;
+      } catch (_) {
+        return false;
+      }
+    }).length;
+
+    if (mounted) {
+      setState(() {
+        _totalMultasMes = multasMes.length;
+        _multasHoy = hoy;
+        _metricasCargadas = true;
+      });
+    }
+  }
+
+  void _aplicarTarjetas(List<Map<String, dynamic>> tarjetas, DateTime now) {
+    final tarjetasUsuario = _isSuperuser
+        ? tarjetas
+        : tarjetas.where((t) => (t['usuario'] as int?) == usuario_id).toList();
+
+    final tarjetasMes = tarjetasUsuario.where((t) {
+      try {
+        final dt = DateTime.parse(t['fecha'] as String);
+        return dt.year == now.year && dt.month == now.month;
+      } catch (_) {
+        return false;
+      }
+    }).toList();
+    final hoy = tarjetasMes.where((t) {
+      try {
+        final dt = DateTime.parse(t['fecha'] as String);
+        return dt.day == now.day;
+      } catch (_) {
+        return false;
+      }
+    }).length;
+    final placas = tarjetasMes
+        .map((t) => t['placa'] as String? ?? '')
+        .toSet()
+        .where((p) => p.isNotEmpty)
+        .length;
+
+    if (mounted) {
+      setState(() {
+        _tarjetasMes = tarjetasMes.length;
+        _tarjetasHoy = hoy;
+        _placasUnicasMes = placas;
+        _metricasCargadas = true;
+      });
+    }
+  }
+
+  // ── Fetch HTTP (fallback cuando caché vacía) ─────────────────────────────
+
+  Future<List<Map<String, dynamic>>> _fetchMultasHttp(
+    Uri Function(String) uriTk,
+    SharedPreferences prefs,
+  ) async {
+    try {
+      final resp = await HttpMonitorizado.get(uriTk('/api/details_multas'));
+      if (resp.statusCode == 200) {
+        final data = json.decode(resp.body);
+        List<Map<String, dynamic>> multas;
+        if (data is List) {
+          multas = data.whereType<Map<String, dynamic>>().toList();
+        } else if (data is Map && data['results'] is List) {
+          multas = (data['results'] as List)
+              .whereType<Map<String, dynamic>>()
+              .toList();
+        } else {
+          return [];
+        }
+        if (multas.isNotEmpty) {
+          await prefs.setString('multas', json.encode(multas));
+        }
+        return multas;
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchTarjetasHttp(
+    Uri Function(String) uriTk,
+    SharedPreferences prefs,
+  ) async {
+    try {
+      final resp = await HttpMonitorizado.get(uriTk('/api/est_tarjeta/'));
+      if (resp.statusCode == 200) {
+        final data = json.decode(resp.body);
+        List<Map<String, dynamic>> tarjetas;
+        if (data is List) {
+          tarjetas = data.whereType<Map<String, dynamic>>().toList();
+        } else if (data is Map && data['results'] is List) {
+          tarjetas = (data['results'] as List)
+              .whereType<Map<String, dynamic>>()
+              .toList();
+        } else {
+          return [];
+        }
+        if (tarjetas.isNotEmpty) {
+          await prefs.setString(
+            'estacionamientos_tarjeta',
+            json.encode(tarjetas),
+          );
+        }
+        return tarjetas;
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  // ── WebSocket: suscripción a canales para métricas en vivo ───────────────
+
+  void _suscribirWsHome() {
+    final ws = ServicioWebSocket.instancia;
+    ws.suscribir('multas');
+    ws.suscribir('tarjetas');
+
+    _wsMultasSub?.cancel();
+    _wsMultasSub = ws.escuchar('multas').listen((evento) {
+      if (!mounted) return;
+      final now = DateTime.now();
+      if (evento.accion == 'snapshot' && evento.datos is List) {
+        final multas = (evento.datos as List)
+            .whereType<Map<String, dynamic>>()
+            .toList();
+        SharedPreferences.getInstance().then(
+          (p) => p.setString('multas', json.encode(multas)),
+        );
+        _aplicarMultas(multas, now);
+      } else if (evento.accion == 'create' && evento.datos is Map) {
+        _onNuevaMultaWs(evento.datos as Map<String, dynamic>);
+      }
+    });
+
+    _wsTarjetasSub?.cancel();
+    _wsTarjetasSub = ws.escuchar('tarjetas').listen((evento) {
+      if (!mounted) return;
+      final now = DateTime.now();
+      if (evento.accion == 'snapshot' && evento.datos is List) {
+        final tarjetas = (evento.datos as List)
+            .whereType<Map<String, dynamic>>()
+            .toList();
+        SharedPreferences.getInstance().then(
+          (p) => p.setString('estacionamientos_tarjeta', json.encode(tarjetas)),
+        );
+        _aplicarTarjetas(tarjetas, now);
+      } else if (evento.accion == 'create' && evento.datos is Map) {
+        _onNuevaTarjetaWs(evento.datos as Map<String, dynamic>);
+      }
+    });
+  }
+
+  void _onNuevaMultaWs(Map<String, dynamic> m) {
+    try {
+      final dt = DateTime.parse(m['fechaEmision'] as String);
+      final now = DateTime.now();
+      if (dt.year == now.year && dt.month == now.month && mounted) {
+        setState(() {
+          _totalMultasMes++;
+          if (dt.day == now.day) _multasHoy++;
+        });
+      }
+    } catch (_) {}
+  }
+
+  void _onNuevaTarjetaWs(Map<String, dynamic> t) {
+    final userId = t['usuario'] as int?;
+    if (!_isSuperuser && userId != usuario_id) return;
+    try {
+      final dt = DateTime.parse(t['fecha'] as String);
+      final now = DateTime.now();
+      if (dt.year == now.year && dt.month == now.month && mounted) {
+        setState(() {
+          _tarjetasMes++;
+          if (dt.day == now.day) _tarjetasHoy++;
+        });
+      }
+    } catch (_) {}
   }
 
   String _formatDate(String isoDate) {
@@ -245,6 +370,8 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> _logout() async {
+    // Desconectar WebSocket antes de limpiar datos
+    ServicioWebSocket.instancia.desconectar();
     final prefs = await SharedPreferences.getInstance();
     await prefs.clear();
     if (!mounted) return;
@@ -257,25 +384,100 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   void dispose() {
+    _wsMultasSub?.cancel();
+    _wsTarjetasSub?.cancel();
     _ctrl.dispose();
     super.dispose();
   }
 
+  void _mostrarInfo(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Color(0xFF0A1628), Color(0xFF000000)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.info_outline, color: Colors.white, size: 24),
+                  SizedBox(width: 10),
+                  Text(
+                    'Información',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Panel Principal SIMERT',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Muestra las métricas del mes, accesos rápidos a las funciones principales y notificaciones del sistema.',
+                    style: TextStyle(color: Colors.grey[700], fontSize: 14),
+                  ),
+                  const SizedBox(height: 20),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Entendido'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final double scale = (MediaQuery.of(context).size.width / 400).clamp(
-      0.8,
-      1.3,
-    );
+    final scale = MediaQuery.textScalerOf(context).scale(1.0).clamp(0.8, 1.3);
     final size = MediaQuery.of(context).size;
 
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: AppBar(
+        centerTitle: true,
         foregroundColor: Colors.white,
-        title: const Text('Bienvenido'),
+        title: const Text(
+          'Bienvenido',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
         backgroundColor: Colors.transparent,
         elevation: 0,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.info_outline),
+            tooltip: 'Información',
+            onPressed: () => _mostrarInfo(context),
+          ),
+        ],
       ),
       drawer: _buildDrawer(context, scale),
       body: Stack(
@@ -285,7 +487,7 @@ class _HomeScreenState extends State<HomeScreen>
           Container(
             decoration: const BoxDecoration(
               gradient: LinearGradient(
-                colors: [Color(0xFF001F54), Color(0xFF5E17EB)],
+                colors: [Color(0xFF0A1628), Color(0xFF000000)],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
@@ -389,7 +591,7 @@ class _HomeScreenState extends State<HomeScreen>
                     ),
                     SizedBox(height: 10 * scale),
                     Text(
-                      'v0.0.1 - 2026',
+                      '21032026',
                       style: TextStyle(
                         color: Colors.white30,
                         fontSize: 11 * scale,
@@ -609,7 +811,7 @@ class _HomeScreenState extends State<HomeScreen>
             padding: EdgeInsets.fromLTRB(20, 48 * scale, 20, 24),
             decoration: const BoxDecoration(
               gradient: LinearGradient(
-                colors: [Color(0xFF001F54), Color(0xFF5E17EB)],
+                colors: [Color(0xFF0A1628), Color(0xFF000000)],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
@@ -757,6 +959,17 @@ class _HomeScreenState extends State<HomeScreen>
                     scale: scale,
                   ),
                 _menuTile(
+                  Icons.data_usage_rounded,
+                  'Consumo de Datos',
+                  () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const MonitorDatosScreen(),
+                    ),
+                  ),
+                  scale: scale,
+                ),
+                _menuTile(
                   Icons.lock_reset_rounded,
                   'Cambiar contraseña',
                   () => Navigator.push(
@@ -780,7 +993,7 @@ class _HomeScreenState extends State<HomeScreen>
                         const Icon(
                           Icons.admin_panel_settings_rounded,
                           size: 12,
-                          color: Color(0xFF5E17EB),
+                          color: Color(0xFF1565C0),
                         ),
                         const SizedBox(width: 6),
                         Text(
@@ -788,7 +1001,7 @@ class _HomeScreenState extends State<HomeScreen>
                           style: TextStyle(
                             fontSize: 10 * scale,
                             fontWeight: FontWeight.bold,
-                            color: const Color(0xFF5E17EB),
+                            color: const Color(0xFF1565C0),
                             letterSpacing: 1.2,
                           ),
                         ),
@@ -838,7 +1051,7 @@ class _HomeScreenState extends State<HomeScreen>
           Padding(
             padding: const EdgeInsets.only(bottom: 16),
             child: Text(
-              'v0.0.1 - 2026',
+              '21032026',
               style: TextStyle(
                 color: Colors.grey.shade400,
                 fontSize: 11 * scale,
@@ -921,18 +1134,18 @@ class _HomeScreenState extends State<HomeScreen>
     final iconColor = isLogout
         ? Colors.red.shade600
         : isAdmin
-        ? const Color(0xFF5E17EB)
-        : const Color(0xFF5E17EB);
+        ? const Color(0xFF1565C0)
+        : const Color(0xFF1565C0);
     final iconBg = isLogout
         ? Colors.red.shade50
         : isAdmin
-        ? const Color(0xFF5E17EB).withValues(alpha: 0.15)
-        : const Color(0xFF5E17EB).withValues(alpha: 0.10);
+        ? const Color(0xFF1565C0).withValues(alpha: 0.15)
+        : const Color(0xFF1565C0).withValues(alpha: 0.10);
     final textColor = isLogout
         ? Colors.red.shade600
         : isAdmin
-        ? const Color(0xFF5E17EB)
-        : const Color(0xFF001F54);
+        ? const Color(0xFF1565C0)
+        : const Color(0xFF0A1628);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),

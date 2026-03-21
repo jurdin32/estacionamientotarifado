@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'package:estacionamientotarifado/home_screen.dart';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+import 'package:estacionamientotarifado/servicios/httpMonitorizado.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class CambiarContrasenaScreen extends StatefulWidget {
@@ -14,8 +14,8 @@ class CambiarContrasenaScreen extends StatefulWidget {
 }
 
 class _CambiarContrasenaScreenState extends State<CambiarContrasenaScreen> {
-  static const _colorPrimario = Color(0xFF001F54);
-  static const _colorSecundario = Color(0xFF5E17EB);
+  static const _colorPrimario = Color(0xFF0A1628);
+  static const _colorSecundario = Color(0xFF1565C0);
 
   final _formKey = GlobalKey<FormState>();
   final _actualCtrl = TextEditingController();
@@ -53,7 +53,7 @@ class _CambiarContrasenaScreenState extends State<CambiarContrasenaScreen> {
         return;
       }
 
-      final response = await http.post(
+      final response = await HttpMonitorizado.post(
         Uri.parse(
           'https://simert.transitoelguabo.gob.ec/api/auth/change_password',
         ),
@@ -145,6 +145,71 @@ class _CambiarContrasenaScreenState extends State<CambiarContrasenaScreen> {
     );
   }
 
+  void _mostrarInfo(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Color(0xFF0A1628), Color(0xFF000000)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.info_outline, color: Colors.white, size: 24),
+                  SizedBox(width: 10),
+                  Text(
+                    'Información',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Cambiar Contraseña',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Permite cambiar la contraseña de acceso al sistema. Se recomienda usar una contraseña segura con letras, números y caracteres especiales.',
+                    style: TextStyle(color: Colors.grey[700], fontSize: 14),
+                  ),
+                  const SizedBox(height: 20),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Entendido'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -152,10 +217,11 @@ class _CambiarContrasenaScreenState extends State<CambiarContrasenaScreen> {
       child: Scaffold(
         backgroundColor: const Color(0xFFF0F4FF),
         appBar: AppBar(
+          centerTitle: true,
           flexibleSpace: Container(
             decoration: const BoxDecoration(
               gradient: LinearGradient(
-                colors: [_colorPrimario, _colorSecundario],
+                colors: [Color(0xFF0A1628), Color(0xFF000000)],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
@@ -174,6 +240,13 @@ class _CambiarContrasenaScreenState extends State<CambiarContrasenaScreen> {
           iconTheme: const IconThemeData(color: Colors.white),
           backgroundColor: Colors.transparent,
           elevation: 0,
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.info_outline, color: Colors.white),
+              tooltip: 'Información',
+              onPressed: () => _mostrarInfo(context),
+            ),
+          ],
         ),
         body: SafeArea(
           child: SingleChildScrollView(

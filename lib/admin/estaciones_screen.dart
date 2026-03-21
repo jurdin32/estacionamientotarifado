@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:http/http.dart' as http;
+import 'package:estacionamientotarifado/servicios/httpMonitorizado.dart';
+import 'package:estacionamientotarifado/servicios/servicioWebSocket.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -50,9 +51,10 @@ class EstacionesAdminScreen extends StatefulWidget {
       };
       if (token.isNotEmpty) headers['Authorization'] = 'Token $token';
       if (sessionCookie.isNotEmpty) headers['Cookie'] = sessionCookie;
-      final response = await http
-          .get(Uri.parse(_kBaseUrl), headers: headers)
-          .timeout(const Duration(seconds: 30));
+      final response = await HttpMonitorizado.get(
+        Uri.parse(_kBaseUrl),
+        headers: headers,
+      ).timeout(const Duration(seconds: 30));
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         final lista = (data is List ? data : (data['results'] ?? []) as List)
@@ -70,8 +72,8 @@ class EstacionesAdminScreen extends StatefulWidget {
 }
 
 class _EstacionesAdminScreenState extends State<EstacionesAdminScreen> {
-  static const Color _primary = Color(0xFF001F54);
-  static const Color _accent = Color(0xFF5E17EB);
+  static const Color _primary = Color(0xFF0A1628);
+  static const Color _accent = Color(0xFF1565C0);
   static const Color _fondo = Color(0xFFF0F4FF);
 
   final TextEditingController _searchCtrl = TextEditingController();
@@ -84,6 +86,7 @@ class _EstacionesAdminScreenState extends State<EstacionesAdminScreen> {
       'todos'; // 'todos' | 'disponible' | 'ocupado' | 'reservado'
   String? _token;
   String _sessionCookie = '';
+  StreamSubscription? _wsEstSub;
 
   List<Map<String, dynamic>> get _filtradas {
     final q = _searchCtrl.text.trim().toLowerCase();
@@ -114,10 +117,12 @@ class _EstacionesAdminScreenState extends State<EstacionesAdminScreen> {
     super.initState();
     _searchCtrl.addListener(() => setState(() {}));
     _init();
+    _suscribirWsEstaciones();
   }
 
   @override
   void dispose() {
+    _wsEstSub?.cancel();
     _searchCtrl.dispose();
     super.dispose();
   }
@@ -134,6 +139,43 @@ class _EstacionesAdminScreenState extends State<EstacionesAdminScreen> {
     } else {
       await _fetchEstaciones();
     }
+  }
+
+  void _suscribirWsEstaciones() {
+    final ws = ServicioWebSocket.instancia;
+    ws.suscribir('estaciones');
+
+    _wsEstSub?.cancel();
+    _wsEstSub = ws.escuchar('estaciones').listen((evento) {
+      if (!mounted) return;
+      if (evento.accion == 'snapshot' && evento.datos is List) {
+        final lista = (evento.datos as List)
+            .whereType<Map<String, dynamic>>()
+            .toList();
+        _EstacionesCache.guardar(lista);
+        setState(() => _todas = lista);
+      } else if (evento.accion == 'update' && evento.datos is Map) {
+        final upd = evento.datos as Map<String, dynamic>;
+        final id = upd['id'];
+        if (id != null) {
+          final idx = _todas.indexWhere((e) => e['id'] == id);
+          if (idx >= 0) {
+            setState(() => _todas[idx] = upd);
+            _EstacionesCache.guardar(_todas);
+          }
+        }
+      } else if (evento.accion == 'create' && evento.datos is Map) {
+        final nuevo = evento.datos as Map<String, dynamic>;
+        setState(() => _todas.add(nuevo));
+        _EstacionesCache.guardar(_todas);
+      } else if (evento.accion == 'delete' && evento.datos is Map) {
+        final id = (evento.datos as Map<String, dynamic>)['id'];
+        if (id != null) {
+          setState(() => _todas.removeWhere((e) => e['id'] == id));
+          _EstacionesCache.guardar(_todas);
+        }
+      }
+    });
   }
 
   Map<String, String> get _authHeaders {
@@ -162,9 +204,10 @@ class _EstacionesAdminScreenState extends State<EstacionesAdminScreen> {
       }
     }
     try {
-      final response = await http
-          .get(Uri.parse(_kBaseUrl), headers: _authHeaders)
-          .timeout(const Duration(seconds: 30));
+      final response = await HttpMonitorizado.get(
+        Uri.parse(_kBaseUrl),
+        headers: _authHeaders,
+      ).timeout(const Duration(seconds: 30));
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         final lista = (data is List ? data : (data['results'] ?? []) as List)
@@ -240,7 +283,7 @@ class _EstacionesAdminScreenState extends State<EstacionesAdminScreen> {
 
   // ── Crear ──────────────────────────────────────────────────────────────────
   Future<bool> _crear(Map<String, dynamic> datos) async {
-    final response = await http.post(
+    final response = await HttpMonitorizado.post(
       Uri.parse(_kBaseUrl),
       headers: _authHeaders,
       body: json.encode(datos),
@@ -250,7 +293,7 @@ class _EstacionesAdminScreenState extends State<EstacionesAdminScreen> {
 
   // ── Actualizar ────────────────────────────────────────────────────────────
   Future<bool> _actualizar(int id, Map<String, dynamic> datos) async {
-    final response = await http.put(
+    final response = await HttpMonitorizado.put(
       Uri.parse('$_kBaseUrl$id/'),
       headers: _authHeaders,
       body: json.encode(datos),
@@ -260,7 +303,7 @@ class _EstacionesAdminScreenState extends State<EstacionesAdminScreen> {
 
   // ── Eliminar ──────────────────────────────────────────────────────────────
   Future<bool> _eliminar(int id) async {
-    final response = await http.delete(
+    final response = await HttpMonitorizado.delete(
       Uri.parse('$_kBaseUrl$id/'),
       headers: _authHeaders,
     );
@@ -400,12 +443,78 @@ class _EstacionesAdminScreenState extends State<EstacionesAdminScreen> {
     );
   }
 
+  void _mostrarInfo(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Color(0xFF0A1628), Color(0xFF000000)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.info_outline, color: Colors.white, size: 24),
+                  SizedBox(width: 10),
+                  Text(
+                    'Información',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Gestión de Estacionamientos',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Permite crear, editar, deshabilitar y eliminar espacios de estacionamiento del sistema.',
+                    style: TextStyle(color: Colors.grey[700], fontSize: 14),
+                  ),
+                  const SizedBox(height: 20),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Entendido'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   // ── UI ────────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _fondo,
       appBar: AppBar(
+        centerTitle: true,
         title: const Text(
           'Gestión de Estacionamientos',
           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
@@ -417,12 +526,19 @@ class _EstacionesAdminScreenState extends State<EstacionesAdminScreen> {
         flexibleSpace: Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(
-              colors: [_primary, _accent],
+              colors: [Color(0xFF0A1628), Color(0xFF000000)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
           ),
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.info_outline),
+            tooltip: 'Información',
+            onPressed: () => _mostrarInfo(context),
+          ),
+        ],
       ),
       floatingActionButton: FloatingActionButton.extended(
         heroTag: 'fab_rango',
@@ -469,7 +585,7 @@ class _EstacionesAdminScreenState extends State<EstacionesAdminScreen> {
             ),
             decoration: const BoxDecoration(
               gradient: LinearGradient(
-                colors: [_primary, _accent],
+                colors: [Color(0xFF0A1628), Color(0xFF000000)],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
@@ -603,7 +719,7 @@ class _EstacionesAdminScreenState extends State<EstacionesAdminScreen> {
                     'ocupado',
                   ),
                   _buildStatTab(
-                    'N/D',
+                    'Reservados',
                     reservadosTotal,
                     Colors.blue,
                     'reservado',
@@ -1001,8 +1117,8 @@ class _FormularioEstacion extends StatefulWidget {
 }
 
 class _FormularioEstacionState extends State<_FormularioEstacion> {
-  static const Color _primary = Color(0xFF001F54);
-  static const Color _accent = Color(0xFF5E17EB);
+  static const Color _primary = Color(0xFF0A1628);
+  static const Color _accent = Color(0xFF1565C0);
 
   final _formKey = GlobalKey<FormState>();
   final _numeroCtrl = TextEditingController();
@@ -1334,8 +1450,8 @@ class _FormularioRango extends StatefulWidget {
 }
 
 class _FormularioRangoState extends State<_FormularioRango> {
-  static const Color _primary = Color(0xFF001F54);
-  static const Color _accent = Color(0xFF5E17EB);
+  static const Color _primary = Color(0xFF0A1628);
+  static const Color _accent = Color(0xFF1565C0);
 
   final _formKey = GlobalKey<FormState>();
   final _desdeCtrl = TextEditingController();

@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:estacionamientotarifado/tarjetas/models/Multa.dart';
 import 'package:estacionamientotarifado/tarjetas/models/Notificaciones2.dart';
-import 'package:http/http.dart' as http;
+import 'package:estacionamientotarifado/servicios/httpMonitorizado.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -156,15 +156,13 @@ class NotificacionService {
 
       print('🔗 Solicitando notificaciones para usuario: $userId');
 
-      final response = await http
-          .get(
-            Uri.parse('$baseUrl/notificacion'),
-            headers: {
-              'Content-Type': 'application/json',
-              'Accept': 'application/json',
-            },
-          )
-          .timeout(const Duration(seconds: 30));
+      final response = await HttpMonitorizado.get(
+        Uri.parse('$baseUrl/notificacion'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 30));
 
       print('📥 Respuesta HTTP: ${response.statusCode}');
 
@@ -254,15 +252,13 @@ class NotificacionService {
 
       print('🔗 Solicitando TODAS las notificaciones para usuario: $userId');
 
-      final response = await http
-          .get(
-            Uri.parse('$baseUrl/notificacion'),
-            headers: {
-              'Content-Type': 'application/json',
-              'Accept': 'application/json',
-            },
-          )
-          .timeout(const Duration(seconds: 30));
+      final response = await HttpMonitorizado.get(
+        Uri.parse('$baseUrl/notificacion'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 30));
 
       print('📥 Respuesta HTTP: ${response.statusCode}');
 
@@ -362,15 +358,13 @@ class NotificacionService {
       '&fecha_inicio=$inicio&fecha_fin=$fin',
     );
 
-    final response = await http
-        .get(
-          uri,
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-          },
-        )
-        .timeout(const Duration(seconds: 30));
+    final response = await HttpMonitorizado.get(
+      uri,
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+    ).timeout(const Duration(seconds: 30));
 
     if (response.statusCode != 200) {
       throw Exception('Error HTTP ${response.statusCode}');

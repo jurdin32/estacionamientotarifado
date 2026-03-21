@@ -349,7 +349,7 @@ class _DialogoConectarImpresoraState extends State<_DialogoConectarImpresora> {
               border: Border.all(
                 color: yaConectado
                     ? Colors.green.shade300
-                    : const Color(0xFF001F54).withValues(alpha: 0.20),
+                    : const Color(0xFF0A1628).withValues(alpha: 0.20),
                 width: 2,
               ),
             ),
@@ -358,7 +358,7 @@ class _DialogoConectarImpresoraState extends State<_DialogoConectarImpresora> {
               size: 36,
               color: yaConectado
                   ? Colors.green.shade700
-                  : const Color(0xFF001F54),
+                  : const Color(0xFF0A1628),
             ),
           ),
           const SizedBox(height: 14),
@@ -410,7 +410,7 @@ class _DialogoConectarImpresoraState extends State<_DialogoConectarImpresora> {
                   : const Icon(Icons.usb, size: 18),
               label: Text(yaConectado ? 'Reconectar' : 'Conectar'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF001F54),
+                backgroundColor: const Color(0xFF0A1628),
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 13),
                 shape: RoundedRectangleBorder(
@@ -427,8 +427,8 @@ class _DialogoConectarImpresoraState extends State<_DialogoConectarImpresora> {
               icon: const Icon(Icons.swap_horiz_rounded, size: 18),
               label: const Text('Cambiar puerto'),
               style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFF5E17EB),
-                side: const BorderSide(color: Color(0xFF5E17EB), width: 1.5),
+                foregroundColor: const Color(0xFF1565C0),
+                side: const BorderSide(color: Color(0xFF1565C0), width: 1.5),
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -461,7 +461,7 @@ class _DialogoConectarImpresoraState extends State<_DialogoConectarImpresora> {
               border: Border.all(
                 color: yaConectado
                     ? Colors.green.shade300
-                    : const Color(0xFF001F54).withValues(alpha: 0.20),
+                    : const Color(0xFF0A1628).withValues(alpha: 0.20),
                 width: 2,
               ),
             ),
@@ -470,7 +470,7 @@ class _DialogoConectarImpresoraState extends State<_DialogoConectarImpresora> {
               size: 36,
               color: yaConectado
                   ? Colors.green.shade700
-                  : const Color(0xFF001F54),
+                  : const Color(0xFF0A1628),
             ),
           ),
           const SizedBox(height: 14),
@@ -523,7 +523,7 @@ class _DialogoConectarImpresoraState extends State<_DialogoConectarImpresora> {
                   : const Icon(Icons.bluetooth_connected, size: 18),
               label: Text(yaConectado ? 'Reconectar' : 'Conectar'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF001F54),
+                backgroundColor: const Color(0xFF0A1628),
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 13),
                 shape: RoundedRectangleBorder(
@@ -540,8 +540,8 @@ class _DialogoConectarImpresoraState extends State<_DialogoConectarImpresora> {
               icon: const Icon(Icons.swap_horiz_rounded, size: 18),
               label: const Text('Cambiar impresora'),
               style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFF5E17EB),
-                side: const BorderSide(color: Color(0xFF5E17EB), width: 1.5),
+                foregroundColor: const Color(0xFF1565C0),
+                side: const BorderSide(color: Color(0xFF1565C0), width: 1.5),
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -586,7 +586,7 @@ class _DialogoConectarImpresoraState extends State<_DialogoConectarImpresora> {
                 gradient: LinearGradient(
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
-                  colors: [Color(0xFF001F54), Color(0xFF5E17EB)],
+                  colors: [Color(0xFF0A1628), Color(0xFF000000)],
                 ),
                 borderRadius: BorderRadius.only(
                   topLeft: Radius.circular(20),
@@ -660,7 +660,7 @@ class _DialogoConectarImpresoraState extends State<_DialogoConectarImpresora> {
                         children: [
                           CircularProgressIndicator(
                             valueColor: AlwaysStoppedAnimation<Color>(
-                              Color(0xFF001F54),
+                              Color(0xFF0A1628),
                             ),
                           ),
                           SizedBox(height: 16),
@@ -705,7 +705,7 @@ class _DialogoConectarImpresoraState extends State<_DialogoConectarImpresora> {
                                   child: const Icon(
                                     Icons.usb_off,
                                     size: 30,
-                                    color: Color(0xFF001F54),
+                                    color: Color(0xFF0A1628),
                                   ),
                                 ),
                                 const SizedBox(height: 14),
@@ -734,7 +734,7 @@ class _DialogoConectarImpresoraState extends State<_DialogoConectarImpresora> {
                                     icon: const Icon(Icons.refresh, size: 18),
                                     label: const Text('Volver a buscar'),
                                     style: ElevatedButton.styleFrom(
-                                      backgroundColor: const Color(0xFF001F54),
+                                      backgroundColor: const Color(0xFF0A1628),
                                       foregroundColor: Colors.white,
                                       padding: const EdgeInsets.symmetric(
                                         vertical: 12,
@@ -772,7 +772,7 @@ class _DialogoConectarImpresoraState extends State<_DialogoConectarImpresora> {
                                     puerto.startsWith('USB')
                                         ? Icons.usb
                                         : Icons.cable,
-                                    color: const Color(0xFF001F54),
+                                    color: const Color(0xFF0A1628),
                                     size: 20,
                                   ),
                                 ),
@@ -797,7 +797,7 @@ class _DialogoConectarImpresoraState extends State<_DialogoConectarImpresora> {
                                 ),
                                 trailing: const Icon(
                                   Icons.chevron_right,
-                                  color: Color(0xFF001F54),
+                                  color: Color(0xFF0A1628),
                                 ),
                                 onTap: () => _conectarUSB(puerto),
                               );
@@ -827,7 +827,7 @@ class _DialogoConectarImpresoraState extends State<_DialogoConectarImpresora> {
                             child: const Icon(
                               Icons.print_disabled_outlined,
                               size: 30,
-                              color: Color(0xFF001F54),
+                              color: Color(0xFF0A1628),
                             ),
                           ),
                           const SizedBox(height: 14),
@@ -856,7 +856,7 @@ class _DialogoConectarImpresoraState extends State<_DialogoConectarImpresora> {
                               icon: const Icon(Icons.refresh, size: 18),
                               label: const Text('Volver a escanear'),
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF001F54),
+                                backgroundColor: const Color(0xFF0A1628),
                                 foregroundColor: Colors.white,
                                 padding: const EdgeInsets.symmetric(
                                   vertical: 12,
@@ -892,7 +892,7 @@ class _DialogoConectarImpresoraState extends State<_DialogoConectarImpresora> {
                             ),
                             child: const Icon(
                               Icons.print_outlined,
-                              color: Color(0xFF001F54),
+                              color: Color(0xFF0A1628),
                               size: 20,
                             ),
                           ),
@@ -913,7 +913,7 @@ class _DialogoConectarImpresoraState extends State<_DialogoConectarImpresora> {
                           ),
                           trailing: const Icon(
                             Icons.chevron_right,
-                            color: Color(0xFF001F54),
+                            color: Color(0xFF0A1628),
                           ),
                           onTap: () => _conectar(dispositivo),
                         );
@@ -939,9 +939,9 @@ class _DialogoConectarImpresoraState extends State<_DialogoConectarImpresora> {
                       _esWindows ? 'Actualizar puertos' : 'Volver a escanear',
                     ),
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFF001F54),
+                      foregroundColor: const Color(0xFF0A1628),
                       side: const BorderSide(
-                        color: Color(0xFF001F54),
+                        color: Color(0xFF0A1628),
                         width: 1.5,
                       ),
                       padding: const EdgeInsets.symmetric(vertical: 10),

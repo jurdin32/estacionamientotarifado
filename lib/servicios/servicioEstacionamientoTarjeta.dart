@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:estacionamientotarifado/tarjetas/models/Tarjetas.dart';
-import 'package:http/http.dart' as http;
+import 'package:estacionamientotarifado/servicios/httpMonitorizado.dart';
 
 const String _urlEstTarjeta =
     'https://simert.transitoelguabo.gob.ec/api/est_tarjeta/';
@@ -15,7 +15,7 @@ Uri _uriTkTarjeta(String token) {
 Future<List<Estacionamiento_Tarjeta>> fetchEstacionamientoTarjeta({
   String token = '',
 }) async {
-  final response = await http.get(_uriTkTarjeta(token));
+  final response = await HttpMonitorizado.get(_uriTkTarjeta(token));
 
   if (response.statusCode == 200) {
     final List<dynamic> jsonData = json.decode(response.body);
@@ -37,7 +37,7 @@ Uri _uriTkTarjetaBase(String token) {
 
 /// Descarga /api/tarjeta/ y devuelve {numero → minutos_consumidos}.
 Future<Map<int, int>> fetchTarjetasTiempo({String token = ''}) async {
-  final resp = await http.get(_uriTkTarjetaBase(token));
+  final resp = await HttpMonitorizado.get(_uriTkTarjetaBase(token));
   if (resp.statusCode != 200) return {};
   final List<dynamic> items = json.decode(resp.body);
   return {
@@ -46,8 +46,12 @@ Future<Map<int, int>> fetchTarjetasTiempo({String token = ''}) async {
   };
 }
 
+/// Caché local de {numero → id} para evitar GET completo antes de cada PATCH.
+Map<int, int> _tarjetaIdCache = {};
+
 /// Busca la tarjeta con [numero] en /api/tarjeta/ y actualiza su `tiempo`
 /// con el valor [totalMinutos] (ya calculado, máximo 120).
+/// Usa caché local de IDs para evitar un GET completo en cada llamada.
 Future<void> actualizarTiempoTarjeta(
   int numero,
   int totalMinutos, {
@@ -55,27 +59,33 @@ Future<void> actualizarTiempoTarjeta(
 }) async {
   final tiempoFinal = totalMinutos.clamp(0, 120);
 
-  final listResp = await http.get(_uriTkTarjetaBase(token));
-  if (listResp.statusCode != 200) return;
+  int? id = _tarjetaIdCache[numero];
+  if (id == null) {
+    final listResp = await HttpMonitorizado.get(_uriTkTarjetaBase(token));
+    if (listResp.statusCode != 200) return;
 
-  final List<dynamic> items = json.decode(listResp.body);
-  final tarjeta = items.cast<Map<String, dynamic>>().firstWhere(
-    (t) => t['numero'] == numero,
-    orElse: () => <String, dynamic>{},
-  );
-  if (tarjeta.isEmpty) return;
-
-  final int id = tarjeta['id'] as int;
+    final List<dynamic> items = json.decode(listResp.body);
+    // Llenar caché completo para evitar futuros GETs
+    for (final t in items.cast<Map<String, dynamic>>()) {
+      _tarjetaIdCache[(t['numero'] as num).toInt()] = (t['id'] as num).toInt();
+    }
+    id = _tarjetaIdCache[numero];
+    if (id == null) return;
+  }
 
   final patchUri = token.isEmpty
       ? Uri.parse('$_urlTarjeta$id/')
       : Uri.parse('$_urlTarjeta$id/?_tk=${Uri.encodeComponent(token)}');
 
-  await http.patch(
+  final resp = await HttpMonitorizado.patch(
     patchUri,
     headers: {'Content-Type': 'application/json'},
     body: json.encode({'tiempo': tiempoFinal}),
   );
+  // Si falla con 404, invalidar caché y reintentar
+  if (resp.statusCode == 404) {
+    _tarjetaIdCache.remove(numero);
+  }
   debugPrint('⏱ Tarjeta #$numero → $tiempoFinal min');
 }
 
@@ -83,7 +93,7 @@ Future<Estacionamiento_Tarjeta> registarEstacionamientoTarjeta(
   Estacionamiento_Tarjeta est, {
   String token = '',
 }) async {
-  final response = await http.post(
+  final response = await HttpMonitorizado.post(
     _uriTkTarjeta(token),
     headers: {'Content-Type': 'application/json'},
     body: json.encode(est.toJson()),

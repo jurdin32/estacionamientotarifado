@@ -2,6 +2,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
+import 'package:estacionamientotarifado/servicios/httpMonitorizado.dart';
 import 'package:estacionamientotarifado/tarjetas/models/Notificacion.dart';
 import 'package:estacionamientotarifado/tarjetas/models/Multa.dart';
 import 'package:http_parser/http_parser.dart';
@@ -19,13 +20,22 @@ class NotificacionService {
     DetalleNotificacion detalle,
   ) async {
     try {
+      // Obtener credenciales para autenticación
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token') ?? '';
+
+      // Construir URL con token (Apache elimina header Authorization)
+      final uri = token.isNotEmpty
+          ? Uri.parse('$_baseUrl?_tk=${Uri.encodeComponent(token)}')
+          : Uri.parse(_baseUrl);
+
       final Map<String, dynamic> requestBody = detalle.toJson();
 
       print("📤 Enviando datos a la API...");
       print("📊 JSON enviado: ${json.encode(requestBody)}");
 
-      final response = await http.post(
-        Uri.parse(_baseUrl),
+      final response = await HttpMonitorizado.post(
+        uri,
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
@@ -51,8 +61,29 @@ class NotificacionService {
         String errorMessage = 'Error del servidor';
         try {
           final errorData = json.decode(response.body);
-          errorMessage =
-              errorData['message'] ?? errorData['error'] ?? errorMessage;
+          // DRF devuelve errores como {"campo": ["error"]} o {"detail": "..."}
+          if (errorData is Map) {
+            if (errorData.containsKey('detail')) {
+              errorMessage = errorData['detail'].toString();
+            } else if (errorData.containsKey('message')) {
+              errorMessage = errorData['message'].toString();
+            } else if (errorData.containsKey('error')) {
+              errorMessage = errorData['error'].toString();
+            } else {
+              // Parsear errores de validación por campo
+              final errores = <String>[];
+              errorData.forEach((key, value) {
+                if (value is List) {
+                  errores.add('$key: ${value.join(', ')}');
+                } else {
+                  errores.add('$key: $value');
+                }
+              });
+              if (errores.isNotEmpty) {
+                errorMessage = errores.join('\n');
+              }
+            }
+          }
         } catch (e) {
           errorMessage = 'Error ${response.statusCode}: ${response.body}';
         }
@@ -92,6 +123,16 @@ class NotificacionService {
     List<File> imagenes,
   ) async {
     try {
+      // Obtener credenciales para autenticación
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token') ?? '';
+      final sessionCookie = prefs.getString('session_cookie') ?? '';
+
+      // Construir URL con token (Apache elimina header Authorization)
+      final uri = token.isNotEmpty
+          ? Uri.parse(_evidenciaUrl).replace(queryParameters: {'_tk': token})
+          : Uri.parse(_evidenciaUrl);
+
       List<Map<String, dynamic>> resultados = [];
 
       for (int i = 0; i < imagenes.length; i++) {
@@ -108,7 +149,16 @@ class NotificacionService {
         }
 
         // Crear la solicitud multipart
-        var request = http.MultipartRequest('POST', Uri.parse(_evidenciaUrl));
+        var request = http.MultipartRequest('POST', uri);
+
+        // Headers de autenticación
+        if (token.isNotEmpty) {
+          request.headers['Authorization'] = 'Token $token';
+        }
+        if (sessionCookie.isNotEmpty) {
+          request.headers['Cookie'] = sessionCookie;
+        }
+        request.headers['Accept'] = 'application/json';
 
         // Agregar campos
         request.fields['dNotificaicon'] = idNotificacion.toString();

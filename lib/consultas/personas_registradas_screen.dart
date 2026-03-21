@@ -1,8 +1,8 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:http/http.dart' as http;
+import 'package:estacionamientotarifado/servicios/httpMonitorizado.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class PersonasRegistradasScreen extends StatefulWidget {
@@ -15,8 +15,8 @@ class PersonasRegistradasScreen extends StatefulWidget {
 }
 
 class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
-  static const Color _primary = Color(0xFF001F54);
-  static const Color _accent = Color(0xFF5E17EB);
+  static const Color _primary = Color(0xFF0A1628);
+  static const Color _accent = Color(0xFF1565C0);
   static const Color _fondo = Color(0xFFF0F4FF);
 
   final TextEditingController _searchController = TextEditingController();
@@ -103,9 +103,10 @@ class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
         'Accept': 'application/json',
         if (token.isNotEmpty) 'Authorization': 'Token $token',
       };
-      final response = await http
-          .get(uri, headers: headers)
-          .timeout(const Duration(seconds: 30));
+      final response = await HttpMonitorizado.get(
+        uri,
+        headers: headers,
+      ).timeout(const Duration(seconds: 30));
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data is List) {
@@ -159,12 +160,78 @@ class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
     }
   }
 
-  // â”€â”€ Build â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  void _mostrarInfo(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Color(0xFF0A1628), Color(0xFF000000)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.info_outline, color: Colors.white, size: 24),
+                  SizedBox(width: 10),
+                  Text(
+                    'Información',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Beneficio Adulto Mayor / Discapacidad',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Registro de beneficiarios del programa de adulto mayor y discapacidad. Permite consultar y gestionar las personas registradas.',
+                    style: TextStyle(color: Colors.grey[700], fontSize: 14),
+                  ),
+                  const SizedBox(height: 20),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Entendido'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Build ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _fondo,
       appBar: AppBar(
+        centerTitle: true,
         title: const Text(
           'Beneficio Adult. Mayor / Discap.',
           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
@@ -174,13 +241,18 @@ class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
         flexibleSpace: Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(
-              colors: [_primary, _accent],
+              colors: [Color(0xFF0A1628), Color(0xFF000000)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
           ),
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.info_outline),
+            tooltip: 'Información',
+            onPressed: () => _mostrarInfo(context),
+          ),
           IconButton(
             icon: const Icon(Icons.refresh_rounded),
             tooltip: 'Actualizar',
@@ -192,7 +264,7 @@ class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
           ? FloatingActionButton.extended(
               heroTag: 'fab_nuevo_beneficiario',
               onPressed: _abrirFormulario,
-              backgroundColor: const Color(0xFF5E17EB),
+              backgroundColor: const Color(0xFF1565C0),
               foregroundColor: Colors.white,
               icon: const Icon(Icons.person_add_rounded),
               label: const Text('Nuevo'),
@@ -209,7 +281,7 @@ class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
     );
   }
 
-  // â”€â”€ Panel de bÃºsqueda â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Panel de búsqueda ──────────────────────────────────────────────────────
   Widget _buildSearchPanel() {
     final size = MediaQuery.of(context).size;
     return Container(
@@ -236,7 +308,7 @@ class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
             ),
             decoration: const BoxDecoration(
               gradient: LinearGradient(
-                colors: [_primary, _accent],
+                colors: [Color(0xFF0A1628), Color(0xFF000000)],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
@@ -279,7 +351,7 @@ class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
               ],
             ),
           ),
-          // Campo de bÃºsqueda
+          // Campo de búsqueda
           Padding(
             padding: EdgeInsets.all(size.width * 0.04),
             child: TextField(
@@ -312,7 +384,7 @@ class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
     );
   }
 
-  // â”€â”€ Body â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Body ───────────────────────────────────────────────────────────────────
   Widget _buildBody() {
     if (_isLoading) return _buildLoadingState();
     if (_errorMessage != null) return _buildErrorState();
@@ -395,7 +467,7 @@ class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
                               valueColor: AlwaysStoppedAnimation<Color>(
-                                Color(0xFF5E17EB),
+                                Color(0xFF1565C0),
                               ),
                             ),
                           ),
@@ -410,7 +482,7 @@ class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
     );
   }
 
-  // â”€â”€ Estados â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Estados ────────────────────────────────────────────────────────────────
   Widget _buildLoadingState() {
     return Center(
       child: Column(
@@ -591,7 +663,7 @@ class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
     );
   }
 
-  // â”€â”€ Tarjeta â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Tarjeta ────────────────────────────────────────────────────────────────
   Widget _buildCard(Map<String, dynamic> p) {
     final tipo = p['tipo_beneficiario'] as String?;
     final propietario = p['propietario'] as String? ?? '-';
@@ -741,7 +813,7 @@ class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
     );
   }
 
-  // â”€â”€ Helpers UI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Helpers UI ─────────────────────────────────────────────────────────────
   Widget _buildStatTab(String label, int count, Color color, String filtro) {
     final isSelected = _filtroTipo == filtro;
     return Expanded(
@@ -859,15 +931,11 @@ class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
         'Accept': 'application/json',
         if (token.isNotEmpty) 'Authorization': 'Token $token',
       };
-      final response = await http
-          .post(
-            Uri.parse(
-              'https://simert.transitoelguabo.gob.ec/api/adulto-mayor/',
-            ),
-            headers: headers,
-            body: json.encode(datos),
-          )
-          .timeout(const Duration(seconds: 30));
+      final response = await HttpMonitorizado.post(
+        Uri.parse('https://simert.transitoelguabo.gob.ec/api/adulto-mayor/'),
+        headers: headers,
+        body: json.encode(datos),
+      ).timeout(const Duration(seconds: 30));
       return response.statusCode == 201 || response.statusCode == 200;
     } catch (_) {
       return false;
@@ -883,15 +951,13 @@ class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
         'Accept': 'application/json',
         if (token.isNotEmpty) 'Authorization': 'Token $token',
       };
-      final response = await http
-          .put(
-            Uri.parse(
-              'https://simert.transitoelguabo.gob.ec/api/adulto-mayor/$id/',
-            ),
-            headers: headers,
-            body: json.encode(datos),
-          )
-          .timeout(const Duration(seconds: 30));
+      final response = await HttpMonitorizado.put(
+        Uri.parse(
+          'https://simert.transitoelguabo.gob.ec/api/adulto-mayor/$id/',
+        ),
+        headers: headers,
+        body: json.encode(datos),
+      ).timeout(const Duration(seconds: 30));
       return response.statusCode == 200;
     } catch (_) {
       return false;
@@ -899,7 +965,7 @@ class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
   }
 }
 
-// â”€â”€ Modal de detalle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Modal de detalle ──────────────────────────────────────────────────────────
 class _DetallePersona extends StatelessWidget {
   final Map<String, dynamic> persona;
   final bool canWrite;
@@ -910,8 +976,8 @@ class _DetallePersona extends StatelessWidget {
     this.onEditar,
   });
 
-  static const Color _primary = Color(0xFF001F54);
-  static const Color _accent = Color(0xFF5E17EB);
+  static const Color _primary = Color(0xFF0A1628);
+  static const Color _accent = Color(0xFF1565C0);
 
   String _labelTipo(String? tipo) {
     switch (tipo) {
@@ -1204,7 +1270,7 @@ class _DetallePersona extends StatelessWidget {
                         icon: const Icon(Icons.edit_rounded, size: 18),
                         label: const Text('Editar beneficiario'),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF5E17EB),
+                          backgroundColor: const Color(0xFF1565C0),
                           foregroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(vertical: 13),
                           shape: RoundedRectangleBorder(
@@ -1225,7 +1291,7 @@ class _DetallePersona extends StatelessWidget {
   }
 }
 
-// â”€â”€ Widgets compartidos â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Widgets compartidos ────────────────────────────────────────────────────────
 class _SectionLabel extends StatelessWidget {
   final String label;
   const _SectionLabel({required this.label});
@@ -1239,7 +1305,7 @@ class _SectionLabel extends StatelessWidget {
           height: 14,
           decoration: BoxDecoration(
             gradient: const LinearGradient(
-              colors: [Color(0xFF001F54), Color(0xFF5E17EB)],
+              colors: [Color(0xFF0A1628), Color(0xFF000000)],
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
             ),
@@ -1252,7 +1318,7 @@ class _SectionLabel extends StatelessWidget {
           style: const TextStyle(
             fontSize: 10,
             fontWeight: FontWeight.w700,
-            color: Color(0xFF001F54),
+            color: Color(0xFF0A1628),
             letterSpacing: 0.8,
           ),
         ),
@@ -1284,7 +1350,7 @@ class _InfoRow extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 15, color: const Color(0xFF5E17EB)),
+          Icon(icon, size: 15, color: const Color(0xFF1565C0)),
           const SizedBox(width: 7),
           SizedBox(
             width: 130,
@@ -1302,7 +1368,7 @@ class _InfoRow extends StatelessWidget {
               value,
               style: TextStyle(
                 fontSize: 13,
-                color: highlight ? const Color(0xFF001F54) : Colors.grey[800],
+                color: highlight ? const Color(0xFF0A1628) : Colors.grey[800],
                 fontWeight: highlight ? FontWeight.w700 : FontWeight.w500,
                 fontStyle: italic ? FontStyle.italic : FontStyle.normal,
               ),
@@ -1314,7 +1380,7 @@ class _InfoRow extends StatelessWidget {
   }
 }
 
-// ── Formulario registro / edición ──────────────────────────────────────────
+// -- Formulario registro / edición ------------------------------------------
 class _FormBeneficiario extends StatefulWidget {
   final Map<String, dynamic>? persona;
   final List<Map<String, dynamic>> existingPersonas;
@@ -1330,8 +1396,8 @@ class _FormBeneficiario extends StatefulWidget {
 }
 
 class _FormBeneficiarioState extends State<_FormBeneficiario> {
-  static const Color _primary = Color(0xFF001F54);
-  static const Color _accent = Color(0xFF5E17EB);
+  static const Color _primary = Color(0xFF0A1628);
+  static const Color _accent = Color(0xFF1565C0);
 
   final _formKey = GlobalKey<FormState>();
   bool _guardando = false;
@@ -1428,7 +1494,7 @@ class _FormBeneficiarioState extends State<_FormBeneficiario> {
     super.dispose();
   }
 
-  // ── Helpers webservice ────────────────────────────────────────────────────
+  // -- Helpers webservice ----------------------------------------------------
   String? _nonEmpty(dynamic value) {
     if (value == null) return null;
     final s = value.toString().trim();
@@ -1457,7 +1523,9 @@ class _FormBeneficiarioState extends State<_FormBeneficiario> {
       final uri = Uri.parse(
         'https://simert.transitoelguabo.gob.ec/vehiculo_request?placa=$placa',
       );
-      final response = await http.get(uri).timeout(const Duration(seconds: 15));
+      final response = await HttpMonitorizado.get(
+        uri,
+      ).timeout(const Duration(seconds: 15));
       if (!mounted) return;
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -1544,7 +1612,7 @@ class _FormBeneficiarioState extends State<_FormBeneficiario> {
     }
   }
 
-  // ── Guardar ────────────────────────────────────────────────────────────────
+  // -- Guardar ----------------------------------------------------------------
   Future<void> _guardar() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -1728,13 +1796,13 @@ class _FormBeneficiarioState extends State<_FormBeneficiario> {
                 borderRadius: BorderRadius.circular(4),
               ),
             ),
-            // ── Header SIMERT ─────────────────────────────────────────
+            // -- Header SIMERT -----------------------------------------
             Container(
               margin: const EdgeInsets.fromLTRB(14, 10, 14, 0),
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
               decoration: BoxDecoration(
                 gradient: const LinearGradient(
-                  colors: [Color(0xFF001F54), Color(0xFF5E17EB)],
+                  colors: [Color(0xFF0A1628), Color(0xFF000000)],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
@@ -1866,7 +1934,7 @@ class _FormBeneficiarioState extends State<_FormBeneficiario> {
                   controller: controller,
                   padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
                   children: [
-                    // ── Card: Búsqueda por placa ──────────────────────
+                    // -- Card: Búsqueda por placa ----------------------
                     _card(
                       icon: Icons.search_rounded,
                       title: 'Placa del vehículo *',
@@ -2032,7 +2100,7 @@ class _FormBeneficiarioState extends State<_FormBeneficiario> {
                     ),
                     const SizedBox(height: 12),
 
-                    // ── Card: Tipo de beneficiario ──────────────────────
+                    // -- Card: Tipo de beneficiario ----------------------
                     _card(
                       icon: Icons.badge_rounded,
                       title: 'Tipo de beneficiario',
@@ -2056,7 +2124,7 @@ class _FormBeneficiarioState extends State<_FormBeneficiario> {
                     ),
                     const SizedBox(height: 12),
 
-                    // ── Card: Datos del titular ─────────────────────────
+                    // -- Card: Datos del titular -------------------------
                     _card(
                       icon: Icons.folder_shared_rounded,
                       title: 'Documentos habilitantes y datos del titular',
@@ -2180,7 +2248,7 @@ class _FormBeneficiarioState extends State<_FormBeneficiario> {
                     ),
                     const SizedBox(height: 12),
 
-                    // ── Card: Datos del vehículo ────────────────────────
+                    // -- Card: Datos del vehículo ------------------------
                     _card(
                       icon: Icons.directions_car_rounded,
                       title: 'Datos del vehículo',
@@ -2330,7 +2398,7 @@ class _FormBeneficiarioState extends State<_FormBeneficiario> {
                     ),
                     const SizedBox(height: 12),
 
-                    // ── Card: Observaciones y estado ────────────────────
+                    // -- Card: Observaciones y estado --------------------
                     _card(
                       icon: Icons.notes_rounded,
                       title: 'Observaciones',
@@ -2377,7 +2445,7 @@ class _FormBeneficiarioState extends State<_FormBeneficiario> {
               ),
             ),
 
-            // ── Barra de progreso + botón fijo al pie ─────────────────
+            // -- Barra de progreso + botón fijo al pie -----------------
             Container(
               padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
               decoration: BoxDecoration(
@@ -2474,7 +2542,7 @@ class _FormBeneficiarioState extends State<_FormBeneficiario> {
                               ),
                             ),
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF001F54),
+                              backgroundColor: const Color(0xFF0A1628),
                               foregroundColor: Colors.white,
                               disabledBackgroundColor: Colors.grey.shade300,
                               padding: const EdgeInsets.symmetric(vertical: 14),

@@ -1,7 +1,7 @@
 import 'dart:math';
 
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+import 'package:estacionamientotarifado/servicios/httpMonitorizado.dart';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -75,7 +75,7 @@ class _DynamicCredentialScreenState extends State<DynamicCredentialScreen> {
         throw Exception('No user ID found in preferences');
       }
 
-      final response = await http.get(
+      final response = await HttpMonitorizado.get(
         Uri.parse(
           'https://simert.transitoelguabo.gob.ec/api/user_detail/?usuario=$userId',
         ),
@@ -157,6 +157,71 @@ class _DynamicCredentialScreenState extends State<DynamicCredentialScreen> {
     });
   }
 
+  void _mostrarInfo(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Color(0xFF0A1628), Color(0xFF000000)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.info_outline, color: Colors.white, size: 24),
+                  SizedBox(width: 10),
+                  Text(
+                    'Información',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Mi Credencial',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Muestra la credencial digital del usuario con sus datos de identificación y código QR para verificación.',
+                    style: TextStyle(color: Colors.grey[700], fontSize: 14),
+                  ),
+                  const SizedBox(height: 20),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Entendido'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
@@ -172,18 +237,28 @@ class _DynamicCredentialScreenState extends State<DynamicCredentialScreen> {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        title: const Text('Mi Credencial'),
+        centerTitle: true,
+        title: const Text(
+          'Mi Credencial',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
         foregroundColor: Colors.white,
+        elevation: 0,
         flexibleSpace: Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(
-              colors: [Color(0xFF001F54), Color(0xFF5E17EB)],
-              begin: Alignment.centerLeft,
-              end: Alignment.centerRight,
+              colors: [Color(0xFF0A1628), Color(0xFF000000)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
             ),
           ),
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.info_outline),
+            tooltip: 'Información',
+            onPressed: () => _mostrarInfo(context),
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _refreshData,
@@ -196,7 +271,7 @@ class _DynamicCredentialScreenState extends State<DynamicCredentialScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  CircularProgressIndicator(color: Color(0xFF5E17EB)),
+                  CircularProgressIndicator(color: Color(0xFF1565C0)),
                   SizedBox(height: 16),
                   Text('Cargando datos...'),
                 ],
@@ -212,7 +287,7 @@ class _DynamicCredentialScreenState extends State<DynamicCredentialScreen> {
                     const Icon(
                       Icons.error_outline,
                       size: 64,
-                      color: Color(0xFF001F54),
+                      color: Color(0xFF0A1628),
                     ),
                     const SizedBox(height: 16),
                     const Text(
@@ -220,7 +295,7 @@ class _DynamicCredentialScreenState extends State<DynamicCredentialScreen> {
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
-                        color: Color(0xFF001F54),
+                        color: Color(0xFF0A1628),
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -229,7 +304,7 @@ class _DynamicCredentialScreenState extends State<DynamicCredentialScreen> {
                     ElevatedButton(
                       onPressed: _refreshData,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF5E17EB),
+                        backgroundColor: const Color(0xFF1565C0),
                         foregroundColor: Colors.white,
                       ),
                       child: const Text('Reintentar'),
@@ -257,13 +332,13 @@ class _DynamicCredentialScreenState extends State<DynamicCredentialScreen> {
                       const Icon(
                         Icons.touch_app_rounded,
                         size: 14,
-                        color: Color(0xFF5E17EB),
+                        color: Color(0xFF1565C0),
                       ),
                       const SizedBox(width: 5),
                       const Text(
                         'Toca la tarjeta para voltear',
                         style: TextStyle(
-                          color: Color(0xFF5E17EB),
+                          color: Color(0xFF1565C0),
                           fontSize: 12,
                           fontWeight: FontWeight.w500,
                         ),
