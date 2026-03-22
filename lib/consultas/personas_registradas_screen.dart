@@ -875,16 +875,15 @@ class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
   }
 
   void _abrirFormulario({Map<String, dynamic>? persona}) {
-    showModalBottomSheet(
+    showDialog(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
+      barrierDismissible: false,
       builder: (_) => _FormBeneficiario(
         persona: persona,
         existingPersonas: _todas,
         onGuardar: (datos) async {
           final id = persona?['id'] as int?;
-          final ok = id != null
+          final (ok, errorMsg) = id != null
               ? await _actualizar(id, datos)
               : await _crear(datos);
           if (ok) {
@@ -908,10 +907,15 @@ class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
           } else {
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('No se pudo guardar el beneficiario'),
+                SnackBar(
+                  content: Text(
+                    errorMsg.isNotEmpty
+                        ? 'Error: $errorMsg'
+                        : 'No se pudo guardar el beneficiario',
+                  ),
                   backgroundColor: Colors.red,
                   behavior: SnackBarBehavior.floating,
+                  duration: const Duration(seconds: 5),
                 ),
               );
             }
@@ -922,7 +926,7 @@ class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
     );
   }
 
-  Future<bool> _crear(Map<String, dynamic> datos) async {
+  Future<(bool, String)> _crear(Map<String, dynamic> datos) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token') ?? '';
@@ -936,13 +940,35 @@ class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
         headers: headers,
         body: json.encode(datos),
       ).timeout(const Duration(seconds: 30));
-      return response.statusCode == 201 || response.statusCode == 200;
-    } catch (_) {
-      return false;
+      debugPrint(
+        '[Crear Beneficiario] status=${response.statusCode} body=${response.body}',
+      );
+      if (response.statusCode == 201 || response.statusCode == 200) {
+        return (true, '');
+      }
+      // Extraer mensaje de error del servidor
+      String errorMsg = 'Error ${response.statusCode}';
+      try {
+        final body = json.decode(response.body);
+        if (body is Map<String, dynamic>) {
+          final msgs = <String>[];
+          body.forEach((key, value) {
+            if (value is List) {
+              msgs.add('$key: ${value.join(", ")}');
+            } else {
+              msgs.add('$key: $value');
+            }
+          });
+          if (msgs.isNotEmpty) errorMsg = msgs.join('\n');
+        }
+      } catch (_) {}
+      return (false, errorMsg);
+    } catch (e) {
+      return (false, 'Error de conexión: $e');
     }
   }
 
-  Future<bool> _actualizar(int id, Map<String, dynamic> datos) async {
+  Future<(bool, String)> _actualizar(int id, Map<String, dynamic> datos) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token') ?? '';
@@ -958,9 +984,30 @@ class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
         headers: headers,
         body: json.encode(datos),
       ).timeout(const Duration(seconds: 30));
-      return response.statusCode == 200;
-    } catch (_) {
-      return false;
+      debugPrint(
+        '[Actualizar Beneficiario] status=${response.statusCode} body=${response.body}',
+      );
+      if (response.statusCode == 200) {
+        return (true, '');
+      }
+      String errorMsg = 'Error ${response.statusCode}';
+      try {
+        final body = json.decode(response.body);
+        if (body is Map<String, dynamic>) {
+          final msgs = <String>[];
+          body.forEach((key, value) {
+            if (value is List) {
+              msgs.add('$key: ${value.join(", ")}');
+            } else {
+              msgs.add('$key: $value');
+            }
+          });
+          if (msgs.isNotEmpty) errorMsg = msgs.join('\n');
+        }
+      } catch (_) {}
+      return (false, errorMsg);
+    } catch (e) {
+      return (false, 'Error de conexión: $e');
     }
   }
 }
@@ -1005,6 +1052,16 @@ class _DetallePersona extends StatelessWidget {
     } catch (_) {
       return iso;
     }
+  }
+
+  String _formatFechaNac(dynamic val) {
+    if (val == null) return '-';
+    final s = val.toString().trim();
+    if (s.isEmpty) return '-';
+    // Viene como yyyy-MM-dd de la API
+    final parts = s.split('-');
+    if (parts.length == 3) return '${parts[2]}/${parts[1]}/${parts[0]}';
+    return s;
   }
 
   @override
@@ -1136,7 +1193,7 @@ class _DetallePersona extends StatelessWidget {
                   _InfoRow(
                     icon: Icons.cake_outlined,
                     label: 'Fecha nacimiento',
-                    value: _v(persona['fecha_nacimiento']),
+                    value: _formatFechaNac(persona['fecha_nacimiento']),
                   ),
                   _InfoRow(
                     icon: Icons.email_outlined,
@@ -1441,23 +1498,33 @@ class _FormBeneficiarioState extends State<_FormBeneficiario> {
     final p = widget.persona;
     if (p != null) {
       _tipoBenef = p['tipo_beneficiario'] as String? ?? 'AM';
-      _propietarioCtrl.text = p['propietario'] as String? ?? '';
-      _cedulaCtrl.text = p['cedula'] as String? ?? '';
-      _numDocCtrl.text = p['numero_documento'] as String? ?? '';
+      _propietarioCtrl.text = (p['propietario'] as String? ?? '').toUpperCase();
+      _cedulaCtrl.text = (p['cedula'] as String? ?? '').toUpperCase();
+      _numDocCtrl.text = (p['numero_documento'] as String? ?? '').toUpperCase();
       _tipoIdent = _nonEmpty(p['tipo_ident']) ?? 'CED';
-      _fechaNacCtrl.text = p['fecha_nacimiento'] as String? ?? '';
+      _fechaNacCtrl.text = _isoToDmy(p['fecha_nacimiento'] as String? ?? '');
       _correoCtrl.text = p['correo'] as String? ?? '';
       _celularCtrl.text = p['celular'] as String? ?? '';
-      _direccionCtrl.text = p['direccion'] as String? ?? '';
+      _direccionCtrl.text = (p['direccion'] as String? ?? '').toUpperCase();
       _discapCtrl.text = (p['porcentaje_discapacidad'] ?? '').toString();
       _placaCtrl.text = (p['placa'] as String? ?? '').toUpperCase();
-      _marcaCtrl.text = p['marca'] as String? ?? '';
-      _modeloCtrl.text = p['modelo'] as String? ?? '';
+      _marcaCtrl.text = (p['marca'] as String? ?? '').toUpperCase();
+      _modeloCtrl.text = (p['modelo'] as String? ?? '').toUpperCase();
       _anioCtrl.text = (p['anio'] ?? '').toString();
-      _colorCtrl.text = p['color'] as String? ?? '';
-      _observCtrl.text = p['observaciones'] as String? ?? '';
-      _activo = p['activo'] as bool? ?? true;
-      _robado = p['robado'] as bool? ?? false;
+      _colorCtrl.text = (p['color'] as String? ?? '').toUpperCase();
+      _observCtrl.text = (p['observaciones'] as String? ?? '').toUpperCase();
+      final rawActivo = p['activo'];
+      _activo = rawActivo is bool
+          ? rawActivo
+          : (rawActivo?.toString().toLowerCase() == 'true' ||
+                rawActivo?.toString() == '1');
+      final rawRobado = p['robado'];
+      _robado = rawRobado is bool
+          ? rawRobado
+          : (rawRobado?.toString().toLowerCase() == 'si' ||
+                rawRobado?.toString().toLowerCase() == 'sí' ||
+                rawRobado?.toString().toLowerCase() == 'true' ||
+                rawRobado?.toString() == '1');
       // Preservar campos del webservice al editar
       _cilindraje = _nonEmpty(p['cilindraje']);
       _tonelaje = _nonEmpty(p['tonelaje']?.toString());
@@ -1504,6 +1571,32 @@ class _FormBeneficiarioState extends State<_FormBeneficiario> {
   void _fill(TextEditingController ctrl, dynamic value) {
     final s = _nonEmpty(value);
     if (s != null) ctrl.text = s;
+  }
+
+  /// Convierte yyyy-MM-dd → dd/MM/yyyy para mostrar
+  String _isoToDmy(String iso) {
+    if (iso.isEmpty) return '';
+    final parts = iso.split('-');
+    if (parts.length == 3) return '${parts[2]}/${parts[1]}/${parts[0]}';
+    return iso;
+  }
+
+  /// Convierte dd/MM/yyyy → yyyy-MM-dd para la API
+  String _dmyToIso(String dmy) {
+    if (dmy.isEmpty) return '';
+    final parts = dmy.split('/');
+    if (parts.length == 3) return '${parts[2]}-${parts[1]}-${parts[0]}';
+    return dmy;
+  }
+
+  /// Parsea dd/MM/yyyy a DateTime
+  DateTime? _parseDmy(String dmy) {
+    if (dmy.isEmpty) return null;
+    final parts = dmy.split('/');
+    if (parts.length == 3) {
+      return DateTime.tryParse('${parts[2]}-${parts[1]}-${parts[0]}');
+    }
+    return DateTime.tryParse(dmy);
   }
 
   Future<void> _buscarVehiculo() async {
@@ -1616,16 +1709,10 @@ class _FormBeneficiarioState extends State<_FormBeneficiario> {
   Future<void> _guardar() async {
     if (!_formKey.currentState!.validate()) return;
 
-    // Validar duplicados solo en alta
-    if (widget.persona == null) {
-      final cedula = _cedulaCtrl.text.trim().toLowerCase();
-      final placa = _placaCtrl.text.trim().toUpperCase();
-
-      final dupCedula = widget.existingPersonas.firstWhere(
-        (p) => (p['cedula'] as String? ?? '').trim().toLowerCase() == cedula,
-        orElse: () => {},
-      );
-      if (dupCedula.isNotEmpty) {
+    // Validar edad >= 65 para Adulto Mayor (creación y edición)
+    if (_tipoBenef == 'AM') {
+      final fechaTexto = _fechaNacCtrl.text.trim();
+      if (fechaTexto.isEmpty) {
         await showDialog(
           context: context,
           builder: (_) => AlertDialog(
@@ -1633,18 +1720,13 @@ class _FormBeneficiarioState extends State<_FormBeneficiario> {
               borderRadius: BorderRadius.circular(16),
             ),
             icon: const Icon(
-              Icons.person_off_rounded,
+              Icons.cake_outlined,
               color: Colors.orange,
               size: 44,
             ),
-            title: const Text(
-              'Persona ya registrada',
-              textAlign: TextAlign.center,
-            ),
+            title: const Text('Fecha requerida', textAlign: TextAlign.center),
             content: const Text(
-              'La cédula ingresada ya existe en el sistema.\n\n'
-              'El beneficio de estacionamiento tarifado es únicamente '
-              'para un vehículo por persona.',
+              'Debe ingresar la fecha de nacimiento para validar que el beneficiario sea adulto mayor (65 años o más).',
               textAlign: TextAlign.center,
             ),
             actions: [
@@ -1657,51 +1739,159 @@ class _FormBeneficiarioState extends State<_FormBeneficiario> {
         );
         return;
       }
-
-      final dupPlaca = widget.existingPersonas.firstWhere(
-        (p) => (p['placa'] as String? ?? '').trim().toUpperCase() == placa,
-        orElse: () => {},
-      );
-      if (dupPlaca.isNotEmpty) {
-        await showDialog(
-          context: context,
-          builder: (_) => AlertDialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-            icon: const Icon(
-              Icons.directions_car_rounded,
-              color: Colors.orange,
-              size: 44,
-            ),
-            title: const Text(
-              'Vehículo ya registrado',
-              textAlign: TextAlign.center,
-            ),
-            content: Text(
-              'La placa $placa ya se encuentra registrada en el sistema.',
-              textAlign: TextAlign.center,
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Entendido'),
+      final fechaNac = _parseDmy(fechaTexto);
+      if (fechaNac != null) {
+        final hoy = DateTime.now();
+        int edad = hoy.year - fechaNac.year;
+        if (hoy.month < fechaNac.month ||
+            (hoy.month == fechaNac.month && hoy.day < fechaNac.day)) {
+          edad--;
+        }
+        if (edad < 65) {
+          await showDialog(
+            context: context,
+            builder: (_) => AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
               ),
-            ],
-          ),
-        );
-        return;
+              icon: const Icon(
+                Icons.warning_amber_rounded,
+                color: Colors.orange,
+                size: 44,
+              ),
+              title: const Text('No aplica', textAlign: TextAlign.center),
+              content: Text(
+                'La persona tiene $edad años.\n\n'
+                'El beneficio de Adulto Mayor aplica únicamente para personas de 65 años o más.',
+                textAlign: TextAlign.center,
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Entendido'),
+                ),
+              ],
+            ),
+          );
+          return;
+        }
+      }
+    }
+
+    // Validar duplicados en el servidor (solo en alta)
+    if (widget.persona == null) {
+      final cedula = _cedulaCtrl.text.trim();
+      final placa = _placaCtrl.text.trim().toUpperCase();
+
+      // Verificar contra la API
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final token = prefs.getString('token') ?? '';
+        final headers = <String, String>{
+          'Accept': 'application/json',
+          if (token.isNotEmpty) 'Authorization': 'Token $token',
+        };
+        final response = await HttpMonitorizado.get(
+          Uri.parse('https://simert.transitoelguabo.gob.ec/api/adulto-mayor/'),
+          headers: headers,
+        ).timeout(const Duration(seconds: 15));
+
+        if (response.statusCode == 200) {
+          final List<dynamic> registros = json.decode(response.body) is List
+              ? json.decode(response.body) as List<dynamic>
+              : (json.decode(response.body)['results'] as List<dynamic>? ?? []);
+
+          final dupCedula = registros.any(
+            (r) =>
+                (r['cedula'] as String? ?? '').trim().toLowerCase() ==
+                cedula.toLowerCase(),
+          );
+          if (dupCedula) {
+            if (!mounted) return;
+            await showDialog(
+              context: context,
+              builder: (_) => AlertDialog(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                icon: const Icon(
+                  Icons.person_off_rounded,
+                  color: Colors.orange,
+                  size: 44,
+                ),
+                title: const Text(
+                  'Persona ya registrada',
+                  textAlign: TextAlign.center,
+                ),
+                content: const Text(
+                  'La cédula ingresada ya existe en el sistema.\n\n'
+                  'El beneficio de estacionamiento tarifado es únicamente '
+                  'para un vehículo por persona.',
+                  textAlign: TextAlign.center,
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Entendido'),
+                  ),
+                ],
+              ),
+            );
+            return;
+          }
+
+          final dupPlaca = registros.any(
+            (r) => (r['placa'] as String? ?? '').trim().toUpperCase() == placa,
+          );
+          if (dupPlaca) {
+            if (!mounted) return;
+            await showDialog(
+              context: context,
+              builder: (_) => AlertDialog(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                icon: const Icon(
+                  Icons.directions_car_rounded,
+                  color: Colors.orange,
+                  size: 44,
+                ),
+                title: const Text(
+                  'Vehículo ya registrado',
+                  textAlign: TextAlign.center,
+                ),
+                content: Text(
+                  'La placa $placa ya se encuentra registrada en el sistema.',
+                  textAlign: TextAlign.center,
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Entendido'),
+                  ),
+                ],
+              ),
+            );
+            return;
+          }
+        }
+      } catch (e) {
+        debugPrint('[Validación duplicados] Error: $e');
+        // Si falla la consulta, continuar con el registro
+        // y dejar que el servidor valide
       }
     }
 
     setState(() => _guardando = true);
+    final prefs = await SharedPreferences.getInstance();
+    final userId = prefs.getInt('id');
     final datos = <String, dynamic>{
       'tipo_beneficiario': _tipoBenef,
       'propietario': _propietarioCtrl.text.trim(),
       'cedula': _cedulaCtrl.text.trim(),
       'numero_documento': _numDocCtrl.text.trim(),
       'tipo_ident': _tipoIdent,
-      'fecha_nacimiento': _fechaNacCtrl.text.trim(),
+      'fecha_nacimiento': _dmyToIso(_fechaNacCtrl.text.trim()),
       'correo': _correoCtrl.text.trim(),
       'celular': _celularCtrl.text.trim(),
       'direccion': _direccionCtrl.text.trim(),
@@ -1712,16 +1902,19 @@ class _FormBeneficiarioState extends State<_FormBeneficiario> {
       'color': _colorCtrl.text.trim(),
       'observaciones': _observCtrl.text.trim(),
       'activo': _activo,
-      'robado': _robado,
-      if (_tipoBenef == 'DC' && _discapCtrl.text.isNotEmpty)
-        'porcentaje_discapacidad': _discapCtrl.text.trim(),
-      if (_cilindraje != null) 'cilindraje': _cilindraje!,
-      if (_tonelaje != null) 'tonelaje': _tonelaje!,
-      if (_tipoServicio != null) 'tipo_servicio': _tipoServicio!,
-      if (_tipoPeso != null) 'tipo_peso': _tipoPeso!,
-      if (_avaluoComercial != null) 'avaluo_comercial': _avaluoComercial!,
-      if (_inicioPcir != null) 'inicio_pcir': _inicioPcir!,
-      if (_hastaPcir != null) 'hasta_pcir': _hastaPcir!,
+      'robado': _robado ? 'SI' : '',
+      'porcentaje_discapacidad':
+          (_tipoBenef == 'DC' && _discapCtrl.text.isNotEmpty)
+          ? _discapCtrl.text.trim()
+          : '',
+      'cilindraje': _cilindraje ?? '',
+      'tonelaje': _tonelaje ?? '',
+      'tipo_servicio': _tipoServicio ?? '',
+      'tipo_peso': _tipoPeso ?? '',
+      'avaluo_comercial': _avaluoComercial ?? '',
+      'inicio_pcir': _inicioPcir ?? '',
+      'hasta_pcir': _hastaPcir ?? '',
+      'registrado_por': userId,
     };
     final ok = await widget.onGuardar(datos);
     if (mounted) setState(() => _guardando = false);
@@ -1730,12 +1923,7 @@ class _FormBeneficiarioState extends State<_FormBeneficiario> {
 
   Future<void> _abrirDatePicker() async {
     final ahora = DateTime.now();
-    DateTime? inicial;
-    if (_fechaNacCtrl.text.isNotEmpty) {
-      try {
-        inicial = DateTime.parse(_fechaNacCtrl.text.trim());
-      } catch (_) {}
-    }
+    DateTime? inicial = _parseDmy(_fechaNacCtrl.text.trim());
     final picked = await showDatePicker(
       context: context,
       initialDate: inicial ?? DateTime(ahora.year - 40),
@@ -1748,9 +1936,9 @@ class _FormBeneficiarioState extends State<_FormBeneficiario> {
     if (picked != null && mounted) {
       setState(() {
         _fechaNacCtrl.text =
-            '${picked.year.toString().padLeft(4, '0')}-'
-            '${picked.month.toString().padLeft(2, '0')}-'
-            '${picked.day.toString().padLeft(2, '0')}';
+            '${picked.day.toString().padLeft(2, '0')}/'
+            '${picked.month.toString().padLeft(2, '0')}/'
+            '${picked.year.toString().padLeft(4, '0')}';
       });
     }
   }
@@ -1775,163 +1963,97 @@ class _FormBeneficiarioState extends State<_FormBeneficiario> {
     final esEdicion = widget.persona != null;
     final progreso = _calcularProgreso();
     final pct = (progreso / _totalCampos * 100).round();
-    return DraggableScrollableSheet(
-      initialChildSize: 0.96,
-      maxChildSize: 0.99,
-      minChildSize: 0.5,
-      builder: (_, controller) => Container(
-        decoration: const BoxDecoration(
-          color: Color(0xFFF0F4FF),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        ),
+    final size = MediaQuery.of(context).size;
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      clipBehavior: Clip.antiAlias,
+      child: Container(
+        constraints: BoxConstraints(maxHeight: size.height * 0.92),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            // Handle
+            // ── DARK HEADER ────────────────────────────────────────
             Container(
-              margin: const EdgeInsets.only(top: 10),
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey.shade300,
-                borderRadius: BorderRadius.circular(4),
-              ),
-            ),
-            // -- Header SIMERT -----------------------------------------
-            Container(
-              margin: const EdgeInsets.fromLTRB(14, 10, 14, 0),
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
                   colors: [Color(0xFF0A1628), Color(0xFF000000)],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
-                borderRadius: BorderRadius.circular(16),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              child: Row(
                 children: [
-                  Row(
-                    children: [
-                      Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Icon(
-                          esEdicion
-                              ? Icons.edit_note_rounded
-                              : Icons.person_add_alt_1_rounded,
-                          color: Colors.white,
-                          size: 22,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      const Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'SIMERT',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w900,
-                              fontSize: 16,
-                              letterSpacing: 1.5,
-                            ),
-                          ),
-                          Text(
-                            'Registro de Beneficiarios',
-                            style: TextStyle(
-                              color: Colors.white70,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  // Nombre del usuario agente
-                  FutureBuilder<String>(
-                    future: SharedPreferences.getInstance().then(
-                      (p) => p.getString('name')?.isNotEmpty == true
-                          ? p.getString('name')!
-                          : p.getString('username') ?? 'Usuario',
-                    ),
-                    builder: (_, snap) => Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 10,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(
-                            Icons.person_rounded,
-                            color: Colors.white,
-                            size: 16,
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              snap.data ?? '',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 13,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
                   Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
+                    padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.10),
-                      borderRadius: BorderRadius.circular(8),
+                      color: Colors.white.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(14),
                     ),
-                    child: Row(
+                    child: Icon(
+                      esEdicion
+                          ? Icons.edit_note_rounded
+                          : Icons.person_add_alt_1_rounded,
+                      color: Colors.white,
+                      size: 28,
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Icon(
-                          Icons.info_outline_rounded,
-                          color: Colors.white70,
-                          size: 14,
+                        Text(
+                          esEdicion
+                              ? 'Editar Beneficiario'
+                              : 'Registrar Beneficiario',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 17,
+                          ),
                         ),
-                        const SizedBox(width: 6),
-                        Expanded(
+                        const SizedBox(height: 2),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.25),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
                           child: Text(
-                            'Los campos (*) son obligatorios. '
-                            'Busque por placa para autocompletar los datos del vehículo.',
+                            _tipoBenef == 'AM'
+                                ? 'Adulto Mayor'
+                                : 'Persona con Discapacidad',
                             style: const TextStyle(
-                              color: Colors.white70,
-                              fontSize: 11,
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
                         ),
                       ],
                     ),
                   ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close, color: Colors.white70),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
                 ],
               ),
             ),
-            // Body — scrollable
-            Expanded(
+
+            // ── SCROLLABLE CONTENT ─────────────────────────────────
+            Flexible(
               child: Form(
                 key: _formKey,
                 child: ListView(
-                  controller: controller,
                   padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
                   children: [
                     // -- Card: Búsqueda por placa ----------------------
@@ -2156,11 +2278,6 @@ class _FormBeneficiarioState extends State<_FormBeneficiario> {
                           },
                         ),
                         _campo(
-                          _numDocCtrl,
-                          'N° Documento (opcional)',
-                          Icons.numbers_outlined,
-                        ),
-                        _campo(
                           _fechaNacCtrl,
                           'Fecha de nacimiento',
                           Icons.cake_outlined,
@@ -2185,6 +2302,7 @@ class _FormBeneficiarioState extends State<_FormBeneficiario> {
                                 'Correo electrónico',
                                 Icons.email_outlined,
                                 keyboardType: TextInputType.emailAddress,
+                                textCapitalization: TextCapitalization.none,
                                 extraValidator: (v) {
                                   if (v == null || v.isEmpty) return null;
                                   final re = RegExp(
@@ -2439,7 +2557,7 @@ class _FormBeneficiarioState extends State<_FormBeneficiario> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 80), // espacio para barra fija
+                    const SizedBox(height: 20),
                   ],
                 ),
               ),
@@ -2458,104 +2576,99 @@ class _FormBeneficiarioState extends State<_FormBeneficiario> {
                   ),
                 ],
               ),
-              child: SafeArea(
-                top: false,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          'Progreso: $progreso/$_totalCampos campos',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: Colors.grey.shade600,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        Text(
-                          '$pct%',
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: _accent,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(4),
-                      child: LinearProgressIndicator(
-                        value: progreso / _totalCampos,
-                        minHeight: 6,
-                        backgroundColor: Colors.grey.shade200,
-                        valueColor: const AlwaysStoppedAnimation<Color>(
-                          _accent,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Progreso: $progreso/$_totalCampos campos',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey.shade600,
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
+                      Text(
+                        '$pct%',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: _accent,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: progreso / _totalCampos,
+                      minHeight: 6,
+                      backgroundColor: Colors.grey.shade200,
+                      valueColor: const AlwaysStoppedAnimation<Color>(_accent),
                     ),
-                    const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        OutlinedButton.icon(
-                          onPressed: () => Navigator.pop(context),
-                          icon: const Icon(Icons.close_rounded, size: 18),
-                          label: const Text('Cancelar'),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.grey.shade700,
-                            side: BorderSide(color: Colors.grey.shade400),
-                            padding: const EdgeInsets.symmetric(
-                              vertical: 14,
-                              horizontal: 16,
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.close_rounded, size: 18),
+                        label: const Text('Cancelar'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.grey.shade700,
+                          side: BorderSide(color: Colors.grey.shade400),
+                          padding: const EdgeInsets.symmetric(
+                            vertical: 14,
+                            horizontal: 16,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: _guardando ? null : _guardar,
+                          icon: _guardando
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Icon(
+                                  Icons.cloud_upload_rounded,
+                                  size: 18,
+                                ),
+                          label: Text(
+                            _guardando ? 'Guardando…' : 'GUARDAR REGISTRO',
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 0.5,
                             ),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF0A1628),
+                            foregroundColor: Colors.white,
+                            disabledBackgroundColor: Colors.grey.shade300,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12),
                             ),
                           ),
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: ElevatedButton.icon(
-                            onPressed: _guardando ? null : _guardar,
-                            icon: _guardando
-                                ? const SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white,
-                                    ),
-                                  )
-                                : const Icon(
-                                    Icons.cloud_upload_rounded,
-                                    size: 18,
-                                  ),
-                            label: Text(
-                              _guardando ? 'Guardando…' : 'GUARDAR REGISTRO',
-                              style: const TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.bold,
-                                letterSpacing: 0.5,
-                              ),
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF0A1628),
-                              foregroundColor: Colors.white,
-                              disabledBackgroundColor: Colors.grey.shade300,
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ),
           ],
@@ -2718,7 +2831,7 @@ class _FormBeneficiarioState extends State<_FormBeneficiario> {
     String? Function(String?)? extraValidator,
     bool readOnly = false,
     VoidCallback? onTap,
-    TextCapitalization textCapitalization = TextCapitalization.none,
+    TextCapitalization textCapitalization = TextCapitalization.characters,
     ValueChanged<String>? onChanged,
   }) {
     return Padding(
