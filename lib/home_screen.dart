@@ -17,6 +17,7 @@ import 'package:estacionamientotarifado/consultas/admin_usuarios_screen.dart';
 import 'package:estacionamientotarifado/consultas/cambiar_contrasena.dart';
 import 'package:estacionamientotarifado/consultas/personas_registradas_screen.dart';
 import 'package:estacionamientotarifado/consultas/vehicle_screen.dart';
+import 'package:estacionamientotarifado/consultas/manual_usuario_screen.dart';
 import 'package:estacionamientotarifado/login_screan.dart';
 import 'package:estacionamientotarifado/servicios/servicioPermisos.dart';
 import 'package:flutter/material.dart';
@@ -976,6 +977,17 @@ class _HomeScreenState extends State<HomeScreen>
                     context,
                     MaterialPageRoute(
                       builder: (_) => const CambiarContrasenaScreen(),
+                    ),
+                  ),
+                  scale: scale,
+                ),
+                _menuTile(
+                  Icons.menu_book_rounded,
+                  'Manual de Usuario',
+                  () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const ManualUsuarioScreen(),
                     ),
                   ),
                   scale: scale,
