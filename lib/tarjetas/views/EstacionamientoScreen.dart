@@ -2143,9 +2143,15 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
                           ),
                         ],
                         const Spacer(),
+                        // Solo el usuario que registró puede liberar
                         ElevatedButton.icon(
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF0D47A1),
+                            backgroundColor:
+                                (_usuario != null &&
+                                    tarjetaInfo.usuario > 0 &&
+                                    _usuario == tarjetaInfo.usuario)
+                                ? const Color(0xFF0D47A1)
+                                : Colors.grey.shade400,
                             foregroundColor: Colors.white,
                             padding: const EdgeInsets.symmetric(
                               horizontal: 20,
@@ -2154,10 +2160,18 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12),
                             ),
-                            elevation: 2,
-                            shadowColor: const Color(
-                              0xFF0D47A1,
-                            ).withValues(alpha: 0.4),
+                            elevation:
+                                (_usuario != null &&
+                                    tarjetaInfo.usuario > 0 &&
+                                    _usuario == tarjetaInfo.usuario)
+                                ? 2
+                                : 0,
+                            shadowColor:
+                                (_usuario != null &&
+                                    tarjetaInfo.usuario > 0 &&
+                                    _usuario == tarjetaInfo.usuario)
+                                ? const Color(0xFF0D47A1).withValues(alpha: 0.4)
+                                : Colors.transparent,
                           ),
                           icon: estaLiberando
                               ? const SizedBox(
@@ -2170,14 +2184,24 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
                                 )
                               : const Icon(Icons.exit_to_app_rounded, size: 18),
                           label: Text(
-                            estaLiberando ? 'Liberando...' : 'Liberar',
+                            estaLiberando
+                                ? 'Liberando...'
+                                : (_usuario != null &&
+                                      tarjetaInfo.usuario > 0 &&
+                                      _usuario == tarjetaInfo.usuario)
+                                ? 'Liberar'
+                                : 'Bloqueado',
                             style: const TextStyle(
                               fontWeight: FontWeight.w700,
                               fontSize: 13,
                               letterSpacing: 0.3,
                             ),
                           ),
-                          onPressed: estaLiberando
+                          onPressed:
+                              (!(_usuario != null &&
+                                      tarjetaInfo.usuario > 0 &&
+                                      _usuario == tarjetaInfo.usuario) ||
+                                  estaLiberando)
                               ? null
                               : () async {
                                   setState(() {
