@@ -319,25 +319,58 @@ class _NotificacionesscreenState extends State<Notificacionesscreen> {
     });
   }
 
+  /// Tiempo mínimo entre recargas de multas desde la API (30 minutos).
+  static const Duration _cacheMultasDuracion = Duration(minutes: 30);
+  DateTime? _ultimaCargaMultas;
+
   Future<void> _cargarMultas() async {
     setState(() => cargando = true);
 
     // Cargar caché para mostrar rápido
     List<Multa> guardadas = await obtenerMultasGuardadas();
-    if (guardadas.isNotEmpty) {
+
+    // Si hay caché y no ha expirado, usarlo sin llamar a la API
+    final ahora = DateTime.now();
+    final cacheValido =
+        guardadas.isNotEmpty &&
+        (_ultimaCargaMultas == null ||
+            ahora.difference(_ultimaCargaMultas!).abs() < _cacheMultasDuracion);
+
+    if (cacheValido) {
       setState(() {
         multas = guardadas;
-        multaSeleccionada = multas.first;
-        _totalController.text = multaSeleccionada!.valor.toStringAsFixed(2);
+        if (multaSeleccionada == null && multas.isNotEmpty) {
+          multaSeleccionada = multas.first;
+        }
+        if (multaSeleccionada != null) {
+          _totalController.text = multaSeleccionada!.valor.toStringAsFixed(2);
+        }
+        cargando = false;
+      });
+      _actualizarEstadoBoton();
+      return;
+    }
+
+    // No hay caché o expiró: cargar desde API
+    if (guardadas.isNotEmpty) {
+      // Mostrar caché mientras se carga la API
+      setState(() {
+        multas = guardadas;
+        if (multaSeleccionada == null) {
+          multaSeleccionada = multas.first;
+        }
+        if (multaSeleccionada != null) {
+          _totalController.text = multaSeleccionada!.valor.toStringAsFixed(2);
+        }
         cargando = false;
       });
       _actualizarEstadoBoton();
     }
 
-    // Siempre recargar desde API para tener IDs actualizados
     try {
       List<Multa> desdeApi = await fetchMultas();
       if (desdeApi.isNotEmpty) {
+        _ultimaCargaMultas = ahora;
         await guardarMultasEnPreferencias(desdeApi);
         setState(() {
           multas = desdeApi;

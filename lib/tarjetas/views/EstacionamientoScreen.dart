@@ -55,6 +55,12 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
   Timer? _pollingTimer;
   bool _isRefreshing = false;
 
+  /// Throttle para evitar múltiples llamadas HTTP simultáneas a la API.
+  /// Si hay una sincronización en curso, las siguientes se saltan.
+  bool _sincronizando = false;
+  DateTime _ultimaSyncExitosa = DateTime(2000);
+  static const Duration _minIntervaloSync = Duration(seconds: 30);
+
   /// Suscripción WebSocket para recibir actualizaciones en tiempo real.
   StreamSubscription<WsEvento>? _wsEstacionesSub;
   StreamSubscription<WsEvento>? _wsTarjetasSub;
@@ -504,7 +510,20 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
   /// Solo se debe llamar cuando el WebSocket NO está activo (fallback).
   Future<void> _sincronizarTarjetasSilencioso() async {
     if (_appEnSegundoPlano || !mounted || _wsConectado) return;
+
+    // Throttle: evitar llamadas simultáneas o muy frecuentes
+    if (_sincronizando) {
+      debugPrint('[THROTTLE]  Sync ya en curso, saltando');
+      return;
+    }
+    final ahora = DateTime.now();
+    if (ahora.difference(_ultimaSyncExitosa) < _minIntervaloSync) {
+      debugPrint('[THROTTLE]  Sync reciente, saltando');
+      return;
+    }
+
     try {
+      _sincronizando = true;
       final connectivity = await Connectivity().checkConnectivity();
       if (connectivity.isEmpty ||
           connectivity.first == ConnectivityResult.none) {
@@ -622,11 +641,14 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
         json.encode(_estacionamientosTarjeta.map((e) => e.toJson()).toList()),
       );
 
+      _ultimaSyncExitosa = DateTime.now();
       debugPrint(
         '[REINTENTAR]  Sync: ${estacionesCambiadas.length} est, +${tarjetasActualizadas.length} tar, -${tarjetasLiberadas.length} lib',
       );
     } catch (e) {
       debugPrint('[ADVERTENCIA]  Sincronización silenciosa: $e');
+    } finally {
+      _sincronizando = false;
     }
   }
 
