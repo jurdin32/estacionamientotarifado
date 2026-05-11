@@ -3422,6 +3422,109 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
     );
   }
 
+  /// Encuentra el estacionamiento ocupado con MENOS tiempo restante.
+  /// Retorna (estacion, tarjeta, segundosRestantes) o null si no hay ninguno.
+  (Estacionamiento, Estacionamiento_Tarjeta, int)? _proximoALiberar() {
+    final ahora = DateTime.now();
+    final fechaHoy = DateFormat('yyyy-MM-dd').format(ahora);
+    (Estacionamiento, Estacionamiento_Tarjeta, int)? mejor;
+    int menorTiempo = 0x7FFFFFFF;
+
+    for (final tarjeta in _estacionamientosTarjeta) {
+      if (tarjeta.estacionId <= 0 || tarjeta.fecha != fechaHoy) continue;
+      if (tarjeta.horaSalida.isEmpty) continue;
+
+      // Buscar la estación correspondiente
+      final estacion = _estaciones
+          .where((e) => e.id == tarjeta.estacionId)
+          .firstOrNull;
+      if (estacion == null || !estacion.estado) continue;
+
+      try {
+        final partes = tarjeta.horaSalida.split(':');
+        if (partes.length < 3) continue;
+        final salida = DateTime(
+          ahora.year,
+          ahora.month,
+          ahora.day,
+          int.parse(partes[0]),
+          int.parse(partes[1]),
+          int.parse(partes[2]),
+        );
+        final segundos = salida.difference(ahora).inSeconds;
+        if (segundos > 0 && segundos < menorTiempo) {
+          menorTiempo = segundos;
+          mejor = (estacion, tarjeta, segundos);
+        }
+      } catch (_) {}
+    }
+    return mejor;
+  }
+
+  /// Banner que muestra el estacionamiento próximo a liberarse.
+  Widget _buildProximoALiberarBanner() {
+    final proximo = _proximoALiberar();
+    if (proximo == null) return const SizedBox.shrink();
+
+    final (estacion, tarjeta, segundos) = proximo;
+    final minutos = segundos ~/ 60;
+    final segs = segundos % 60;
+    final tiempoStr = minutos > 0 ? '${minutos}m ${segs}s' : '${segs}s';
+    final esUrgente = segundos < 120; // menos de 2 minutos
+    final color = esUrgente
+        ? const Color(0xFFD32F2F)
+        : segundos < 300
+        ? const Color(0xFFFF9800)
+        : const Color(0xFF1565C0);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        border: Border(
+          bottom: BorderSide(color: color.withValues(alpha: 0.25)),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            esUrgente ? Icons.warning_amber_rounded : Icons.timer_rounded,
+            size: 16,
+            color: color,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Próximo a liberar: #${estacion.numero}',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              tiempoStr,
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+                fontFamily: 'monospace',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
@@ -3575,6 +3678,8 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
                 );
               },
             ),
+          // ── Banner próximo a liberarse ──────────────────────────────
+          _buildProximoALiberarBanner(),
           Container(
             padding: EdgeInsets.fromLTRB(
               size.width * 0.04,
