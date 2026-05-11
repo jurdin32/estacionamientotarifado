@@ -22,11 +22,11 @@ class Estacionamiento {
 
   factory Estacionamiento.fromJson(Map<String, dynamic> json) =>
       Estacionamiento(
-        id: json['id'],
-        numero: json['numero'],
-        direccion: json['direccion'],
+        id: (json['id'] as num?)?.toInt() ?? 0,
+        numero: (json['numero'] as num?)?.toInt() ?? 0,
+        direccion: json['direccion'] ?? '',
         placa: json['placa'] ?? '',
-        estado: json['estado'],
+        estado: json['estado'] == true,
         updatedAt: json['updated_at'] as String?,
       );
 

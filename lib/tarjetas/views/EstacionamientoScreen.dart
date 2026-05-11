@@ -62,11 +62,6 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
   DateTime _ultimaSyncExitosa = DateTime(2000);
   static const Duration _minIntervaloSync = Duration(seconds: 30);
 
-  /// Timer para leer SharedPreferences periódicamente y reflejar cambios
-  /// del servicio persistente Android en la UI.
-  Timer? _prefsWatcherTimer;
-  static const Duration _prefsWatchInterval = Duration(seconds: 5);
-
   /// Suscripción WebSocket para recibir actualizaciones en tiempo real.
   StreamSubscription<WsEvento>? _wsEstacionesSub;
   StreamSubscription<WsEvento>? _wsTarjetasSub;
@@ -124,7 +119,6 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
     _rangoController.dispose();
     _searchController.dispose();
     _pollingTimer?.cancel();
-    _prefsWatcherTimer?.cancel();
     _persistDebounce?.cancel();
     _fallbackPendiente?.cancel();
     _tabController.dispose();
@@ -1047,78 +1041,10 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
         // los datos actualizados sin necesidad de HTTP adicional.
         _iniciarWebSocket();
       }
-      // Iniciar watcher de SharedPreferences para reflejar cambios del servicio persistente
-      _iniciarPrefsWatcher();
     } catch (e) {
       debugPrint('Error en _loadUserAndData: $e');
       if (mounted) setState(() => _isLoading = false);
     }
-  }
-
-  /// Lee SharedPreferences cada 5s para reflejar en la UI los cambios
-  /// realizados por el ServicioPersistente Android (liberaciones automáticas).
-  void _iniciarPrefsWatcher() {
-    _prefsWatcherTimer?.cancel();
-    _prefsWatcherTimer = Timer.periodic(_prefsWatchInterval, (_) async {
-      if (!mounted || _appEnSegundoPlano) return;
-      try {
-        final prefs = await SharedPreferences.getInstance();
-
-        // Leer estacionamientos
-        final estJson = prefs.getString('estacionamientos');
-        List<Estacionamiento> nuevasEstaciones = [];
-        if (estJson != null) {
-          final List<dynamic> jsonList = json.decode(estJson);
-          nuevasEstaciones = jsonList
-              .map((e) => Estacionamiento.fromJson(e))
-              .toList();
-          nuevasEstaciones.sort((a, b) => a.numero.compareTo(b.numero));
-        }
-
-        // Leer tarjetas
-        final tarJson = prefs.getString('estacionamientos_tarjeta');
-        List<Estacionamiento_Tarjeta> nuevasTarjetas = [];
-        if (tarJson != null) {
-          final List<dynamic> jsonList = json.decode(tarJson);
-          nuevasTarjetas = jsonList
-              .map((e) => _parseEstacionamientoTarjetaFromJson(e))
-              .where((e) => e != null)
-              .cast<Estacionamiento_Tarjeta>()
-              .toList();
-        }
-
-        // Detectar si hubo cambios
-        bool hayCambios =
-            nuevasEstaciones.length != _estaciones.length ||
-            nuevasTarjetas.length != _estacionamientosTarjeta.length;
-
-        if (!hayCambios) {
-          for (int i = 0; i < nuevasEstaciones.length; i++) {
-            if (i >= _estaciones.length) {
-              hayCambios = true;
-              break;
-            }
-            if (nuevasEstaciones[i].estado != _estaciones[i].estado ||
-                nuevasEstaciones[i].placa != _estaciones[i].placa) {
-              hayCambios = true;
-              break;
-            }
-          }
-        }
-
-        if (hayCambios && mounted) {
-          setState(() {
-            _estaciones = nuevasEstaciones;
-            _estacionamientosTarjeta = nuevasTarjetas;
-            _filteredEstaciones = _filterEstaciones(_searchQuery);
-            _rangedEstaciones = _computeRangedEstaciones(_filteredEstaciones);
-          });
-          debugPrint('[PREFS]  UI sincronizada con SharedPreferences');
-        }
-      } catch (e) {
-        // Silencioso
-      }
-    });
   }
 
   void _verificarTiemposExpiradosAlInicio() async {
