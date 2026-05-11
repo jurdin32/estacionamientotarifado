@@ -149,6 +149,9 @@ class ServicioPersistente : Service() {
                 return
             }
 
+            // Leer ID del usuario actual para filtrar solo sus tarjetas
+            val usuarioActual = leerFlutterPrefs(KEY_ID)?.toIntOrNull() ?: 0
+
             // Consultar API
             val estacionesJson = consultarApi("$API_BASE/estacionamientos/?_tk=$token") ?: return
             val tarjetasJson = consultarApi("$API_BASE/estacionamientos_tarjeta/?_tk=$token") ?: return
@@ -199,6 +202,10 @@ class ServicioPersistente : Service() {
                     if (fecha != hoy) continue
                     if (!estacionesOcupadas.contains(estacionId)) continue
 
+                    // Filtrar solo tarjetas del usuario actual
+                    val usuarioTarjeta = obj.optInt("usuario", 0)
+                    if (usuarioActual > 0 && usuarioTarjeta > 0 && usuarioTarjeta != usuarioActual) continue
+
                     val horaSalida = obj.optString("hora_salida", "")
                     if (horaSalida.isEmpty()) continue
 
@@ -207,7 +214,11 @@ class ServicioPersistente : Service() {
 
                     val placa = obj.optString("placa", "S/P")
                     val usuario = obj.optInt("usuario", 0)
-                    val usuarioNombre = obj.optString("usuario_nombre", "")
+                    var usuarioNombre = obj.optString("usuario_nombre", "")
+                    // Si el nombre viene vacío, usar el nombre guardado en prefs
+                    if (usuarioNombre.isEmpty()) {
+                        usuarioNombre = leerFlutterPrefs(KEY_NAME) ?: "Usuario"
+                    }
                     val horaEntrada = obj.optString("hora_entrada", "")
 
                     tarjetasActivas.add(Tarjeta(estacionId, placa, usuario, usuarioNombre, segs))
@@ -371,7 +382,10 @@ class ServicioPersistente : Service() {
         val min = segundosRestantes / 60
         val seg = segundosRestantes % 60
         val tiempo = String.format("%02d:%02d", min, seg)
-        mostrarNotificacion("#$ultimoEstacionId - $ultimaPlaca", "\u23F1 $tiempo restante | \uD83D\uDC64 $ultimoUsuario")
+        mostrarNotificacion(
+            "ID: $ultimoEstacionId | Nro: $ultimaPlaca",
+            "\u23F1 $tiempo restante | \uD83D\uDC64 $ultimoUsuario"
+        )
     }
 
     private fun mostrarNotificacion(titulo: String, contenido: String) {
