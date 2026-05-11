@@ -1482,14 +1482,6 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
     }
     if (_filtroEstado == 'ocupados') {
       result = result.where((e) => e.estado && !_estaDeshabilitado(e)).toList();
-      // Si no es admin, filtrar solo las tarjetas que registró este usuario
-      if (!_esSuperuser && _usuario != null) {
-        final idsDelUsuario = _estacionamientosTarjeta
-            .where((t) => t.usuario == _usuario)
-            .map((t) => t.estacionId)
-            .toSet();
-        result = result.where((e) => idsDelUsuario.contains(e.id)).toList();
-      }
     } else if (_filtroEstado == 'disponibles') {
       result = result
           .where((e) => !e.estado && !_estaDeshabilitado(e))
@@ -1497,6 +1489,23 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
     } else if (_filtroEstado == 'deshabilitados') {
       result = result.where((e) => _estaDeshabilitado(e)).toList();
     }
+
+    // Si no es admin, ocultar los estacionamientos ocupados por OTROS usuarios
+    // El usuario solo ve los que él registró como ocupados; los disponibles y
+    // deshabilitados los ve igual.
+    if (!_esSuperuser && _usuario != null) {
+      final idsDelUsuario = _estacionamientosTarjeta
+          .where((t) => t.usuario == _usuario)
+          .map((t) => t.estacionId)
+          .toSet();
+      result = result.where((e) {
+        // Si está ocupado, solo mostrar si es del usuario actual
+        if (e.estado) return idsDelUsuario.contains(e.id);
+        // Si está libre o deshabilitado, mostrar siempre
+        return true;
+      }).toList();
+    }
+
     return result;
   }
 
@@ -3763,7 +3772,11 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
                     unselectedLabelColor: Colors.grey,
                     labelPadding: EdgeInsets.zero,
                     tabs: [
-                      _buildTab('Todos', _estaciones.length, primaryColor),
+                      _buildTab(
+                        'Todos',
+                        _filterEstaciones('').length,
+                        primaryColor,
+                      ),
                       _buildTab(
                         'Libres',
                         _estaciones
@@ -3773,9 +3786,16 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
                       ),
                       _buildTab(
                         'Ocupados',
-                        _estaciones
-                            .where((e) => e.estado && !_estaDeshabilitado(e))
-                            .length,
+                        _estaciones.where((e) {
+                          if (!e.estado || _estaDeshabilitado(e)) return false;
+                          if (!_esSuperuser && _usuario != null) {
+                            return _estacionamientosTarjeta.any(
+                              (t) =>
+                                  t.estacionId == e.id && t.usuario == _usuario,
+                            );
+                          }
+                          return true;
+                        }).length,
                         Colors.red.shade600,
                       ),
                       _buildTab(
