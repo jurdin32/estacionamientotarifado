@@ -706,7 +706,11 @@ class _NotificacionesscreenState extends State<Notificacionesscreen> {
                               const SizedBox(height: 6),
                               _buildInfoRowCompact(
                                 "Tipo:",
-                                multaSeleccionada?.detalleMulta ?? "",
+                                (multaSeleccionada?.detalleMulta.isNotEmpty ==
+                                            true
+                                        ? multaSeleccionada!.detalleMulta
+                                        : multaSeleccionada?.tipo) ??
+                                    "",
                               ),
                               const SizedBox(height: 6),
                               _buildInfoRowCompact(
@@ -2060,7 +2064,7 @@ class _NotificacionesscreenState extends State<Notificacionesscreen> {
             (m) => DropdownMenuItem(
               value: m,
               child: Text(
-                "${m.detalleMulta} (\$${m.valor.toStringAsFixed(2)})",
+                "${m.detalleMulta.isNotEmpty ? m.detalleMulta : m.tipo} (\$${m.valor.toStringAsFixed(2)})",
                 style: TextStyle(fontSize: 14, color: _colorTexto),
               ),
             ),
