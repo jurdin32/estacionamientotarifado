@@ -1482,6 +1482,14 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
     }
     if (_filtroEstado == 'ocupados') {
       result = result.where((e) => e.estado && !_estaDeshabilitado(e)).toList();
+      // En Ocupados, los no-admin solo ven sus propias tarjetas
+      if (!_esSuperuser && _usuario != null) {
+        final idsDelUsuario = _estacionamientosTarjeta
+            .where((t) => t.usuario == _usuario)
+            .map((t) => t.estacionId)
+            .toSet();
+        result = result.where((e) => idsDelUsuario.contains(e.id)).toList();
+      }
     } else if (_filtroEstado == 'disponibles') {
       result = result
           .where((e) => !e.estado && !_estaDeshabilitado(e))
@@ -1489,23 +1497,6 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
     } else if (_filtroEstado == 'deshabilitados') {
       result = result.where((e) => _estaDeshabilitado(e)).toList();
     }
-
-    // Si no es admin, ocultar los estacionamientos ocupados por OTROS usuarios
-    // El usuario solo ve los que él registró como ocupados; los disponibles y
-    // deshabilitados los ve igual.
-    if (!_esSuperuser && _usuario != null) {
-      final idsDelUsuario = _estacionamientosTarjeta
-          .where((t) => t.usuario == _usuario)
-          .map((t) => t.estacionId)
-          .toSet();
-      result = result.where((e) {
-        // Si está ocupado, solo mostrar si es del usuario actual
-        if (e.estado) return idsDelUsuario.contains(e.id);
-        // Si está libre o deshabilitado, mostrar siempre
-        return true;
-      }).toList();
-    }
-
     return result;
   }
 
@@ -1843,6 +1834,96 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
       ),
     );
 
+    // Determinar si esta tarjeta ocupada es de OTRO usuario (solo aplica en vista "Todos")
+    final bool esDeOtroUsuario =
+        ocupado &&
+        !_esSuperuser &&
+        _usuario != null &&
+        tarjetaInfo.usuario > 0 &&
+        tarjetaInfo.usuario != _usuario;
+
+    // ── Vista simplificada para tarjetas de otros usuarios ──────────
+    if (esDeOtroUsuario) {
+      final String nombreRegistrador =
+          _nombresUsuarios[tarjetaInfo.usuario] ?? 'ID ${tarjetaInfo.usuario}';
+      return Card(
+        elevation: 2,
+        shadowColor: Colors.orange.withValues(alpha: 0.2),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+        clipBehavior: Clip.antiAlias,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            border: Border(
+              left: BorderSide(color: Colors.orange.shade400, width: 4),
+            ),
+          ),
+          child: Row(
+            children: [
+              // Número
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: Colors.orange.shade50,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.orange.shade300, width: 1.5),
+                ),
+                child: Center(
+                  child: Text(
+                    '#${estacion.numero}',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 12,
+                      color: Colors.orange.shade800,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Ocupado',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.orange.shade700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.person_rounded,
+                          size: 14,
+                          color: Colors.orange.shade600,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          nombreRegistrador,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.orange.shade800,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.lock_rounded, size: 16, color: Colors.orange.shade300),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // ── Vista completa (admin, usuario propio, libre, deshabilitado) ──
     // Paleta de colores más imponente
     final Color accentColor = estaDeshabilitado
         ? const Color(0xFF1565C0) // Azul profundo
@@ -3786,16 +3867,9 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
                       ),
                       _buildTab(
                         'Ocupados',
-                        _estaciones.where((e) {
-                          if (!e.estado || _estaDeshabilitado(e)) return false;
-                          if (!_esSuperuser && _usuario != null) {
-                            return _estacionamientosTarjeta.any(
-                              (t) =>
-                                  t.estacionId == e.id && t.usuario == _usuario,
-                            );
-                          }
-                          return true;
-                        }).length,
+                        _estaciones
+                            .where((e) => e.estado && !_estaDeshabilitado(e))
+                            .length,
                         Colors.red.shade600,
                       ),
                       _buildTab(
