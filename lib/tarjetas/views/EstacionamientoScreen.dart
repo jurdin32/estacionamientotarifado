@@ -3431,7 +3431,8 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
     );
   }
 
-  /// Encuentra el estacionamiento ocupado con MENOS tiempo restante.
+  /// Encuentra el estacionamiento ocupado con MENOS tiempo restante
+  /// que pertenezca al usuario actual (o todos si es admin).
   /// Retorna (estacion, tarjeta, segundosRestantes) o null si no hay ninguno.
   (Estacionamiento, Estacionamiento_Tarjeta, int)? _proximoALiberar() {
     final ahora = DateTime.now();
@@ -3442,6 +3443,13 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
     for (final tarjeta in _estacionamientosTarjeta) {
       if (tarjeta.estacionId <= 0 || tarjeta.fecha != fechaHoy) continue;
       if (tarjeta.horaSalida.isEmpty) continue;
+
+      // Si no es admin, solo mostrar tarjetas del usuario actual
+      if (!_esSuperuser &&
+          _usuario != null &&
+          tarjeta.usuario > 0 &&
+          tarjeta.usuario != _usuario)
+        continue;
 
       // Buscar la estación correspondiente
       final estacion = _estaciones
