@@ -1259,37 +1259,39 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
   }
 
   Future<void> _liberarEstacionamientoExpirado(int estacionId) async {
-    // Bloquear el polling para que no sobreescriba el estado local mientras
-    // esperamos la confirmación del servidor.
-    _enProceso.add(estacionId);
-    try {
-      debugPrint(
-        '[REINTENTAR]  Liberando estacionamiento expirado: $estacionId',
-      );
+    if (!mounted) return;
+    debugPrint('[REINTENTAR]  Liberando estacionamiento expirado: $estacionId');
 
-      _updateUIAfterChange(estacionId, false, '');
+    // 1. LIBERAR EN LOCAL INMEDIATAMENTE — el usuario ve el cambio al instante
+    _updateUIAfterChange(estacionId, false, '');
+    await _updateEstacionamientoEstadoLocal(
+      estacionId: estacionId,
+      estado: false,
+      placa: '',
+    );
+    if (mounted) {
+      setState(() {
+        _estacionamientosTarjeta.removeWhere(
+          (tarjeta) => tarjeta.estacionId == estacionId,
+        );
+      });
+    }
+    debugPrint('[OK]  Estacionamiento $estacionId liberado en local');
 
-      await _updateEstacionamientoEstadoLocal(
-        estacionId: estacionId,
-        estado: false,
-        placa: '',
-      );
-
+    // 2. LIBERAR EN SERVIDOR EN BACKGROUND (sin await)
+    // El servicio persistente Android también lo hace, pero por si acaso.
+    unawaited(() async {
       try {
-        // Solo intentar liberar en servidor si la app está activa y hay conexión
         if (!_appEnSegundoPlano) {
-          final connectivityResult = await Connectivity().checkConnectivity();
-          final hasConnection =
-              connectivityResult.isNotEmpty &&
-              connectivityResult.first != ConnectivityResult.none;
-
-          if (hasConnection) {
+          final connectivity = await Connectivity().checkConnectivity();
+          if (connectivity.isNotEmpty &&
+              connectivity.first != ConnectivityResult.none) {
             await actualizarRegistro(
               estacionId: estacionId,
               placa: '',
               estado: false,
               token: _token,
-            ).timeout(const Duration(seconds: 10));
+            ).timeout(const Duration(seconds: 8));
             debugPrint(
               '[OK]  Estacionamiento $estacionId liberado en servidor',
             );
@@ -1298,29 +1300,62 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
       } catch (e) {
         debugPrint('[ADVERTENCIA]  Error al liberar en servidor: $e');
       }
+    }());
+  }
 
-      if (mounted && !_appEnSegundoPlano) {
+  /// Ejecuta la liberación completa de un estacionamiento (llamado desde el botón Liberar).
+  void _ejecutarLiberacion(int estacionId) {
+    unawaited(() async {
+      setState(() {
+        _estacionamientosLiberando[estacionId] = true;
+      });
+
+      final tarjetaPrevia = _estacionamientosTarjeta
+          .where((t) => t.estacionId == estacionId)
+          .toList();
+
+      _enProceso.add(estacionId);
+
+      try {
+        _updateUIAfterChange(estacionId, false, '');
         setState(() {
           _estacionamientosTarjeta.removeWhere(
-            (tarjeta) => tarjeta.estacionId == estacionId,
+            (t) => t.estacionId == estacionId,
           );
         });
+        await _persistirCacheCompleto();
+        await actualizarRegistro(
+          estacionId: estacionId,
+          placa: '',
+          estado: false,
+          token: _token,
+        );
+        _fetchAndCacheEstacionamientosTarjeta();
+        _showCustomSnackBar(
+          'Estacionamiento #${_estaciones.firstWhere(
+            (e) => e.id == estacionId,
+            orElse: () => _estaciones.isNotEmpty ? _estaciones.first : Estacionamiento(id: 0, numero: 0, direccion: '', placa: '', estado: false),
+          ).numero} liberado correctamente',
+        );
+      } catch (e) {
+        _updateUIAfterChange(estacionId, true, '');
+        setState(() {
+          _estacionamientosTarjeta.addAll(tarjetaPrevia);
+        });
+        unawaited(_persistirCacheCompleto());
+        _showCustomSnackBar('Error al liberar: $e', isError: true);
+      } finally {
+        if (mounted) {
+          setState(() {
+            _estacionamientosLiberando.remove(estacionId);
+          });
+        }
+        Future.delayed(
+          const Duration(seconds: 2),
+          () => _enProceso.remove(estacionId),
+        );
       }
-
-      debugPrint(
-        '[OK]  Estacionamiento $estacionId liberado por tiempo expirado',
-      );
-    } catch (e) {
-      debugPrint(
-        '[X]  Error al liberar estacionamiento expirado $estacionId: $e',
-      );
-    } finally {
-      // Mantener guardia 2s para que el WS broadcast llegue
-      Future.delayed(
-        const Duration(seconds: 2),
-        () => _enProceso.remove(estacionId),
-      );
-    }
+    }());
   }
 
   Widget _buildTab(String label, int count, Color color) {
@@ -2157,129 +2192,87 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
                         ],
                         const Spacer(),
                         // Solo el usuario que registró puede liberar
-                        ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor:
-                                (_usuario != null &&
-                                    tarjetaInfo.usuario > 0 &&
-                                    _usuario == tarjetaInfo.usuario)
-                                ? const Color(0xFF0D47A1)
-                                : Colors.grey.shade400,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 20,
-                              vertical: 11,
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            elevation:
-                                (_usuario != null &&
-                                    tarjetaInfo.usuario > 0 &&
-                                    _usuario == tarjetaInfo.usuario)
-                                ? 2
-                                : 0,
-                            shadowColor:
-                                (_usuario != null &&
-                                    tarjetaInfo.usuario > 0 &&
-                                    _usuario == tarjetaInfo.usuario)
-                                ? const Color(0xFF0D47A1).withValues(alpha: 0.4)
-                                : Colors.transparent,
-                          ),
-                          icon: estaLiberando
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.white,
+                        Builder(
+                          builder: (btnCtx) {
+                            final bool esMiTarjeta =
+                                _usuario != null &&
+                                tarjetaInfo.usuario > 0 &&
+                                _usuario == tarjetaInfo.usuario;
+                            final String nombreReg =
+                                _nombresUsuarios[tarjetaInfo.usuario] ??
+                                'ID ${tarjetaInfo.usuario}';
+                            return Tooltip(
+                              message: esMiTarjeta
+                                  ? 'Liberar este estacionamiento'
+                                  : 'Registrado por $nombreReg — solo él puede liberarlo',
+                              preferBelow: false,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF0A1628),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              textStyle: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                              ),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 8,
+                              ),
+                              child: ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: esMiTarjeta
+                                      ? const Color(0xFF0D47A1)
+                                      : Colors.grey.shade300,
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 11,
                                   ),
-                                )
-                              : const Icon(Icons.exit_to_app_rounded, size: 18),
-                          label: Text(
-                            estaLiberando
-                                ? 'Liberando...'
-                                : (_usuario != null &&
-                                      tarjetaInfo.usuario > 0 &&
-                                      _usuario == tarjetaInfo.usuario)
-                                ? 'Liberar'
-                                : 'Bloqueado',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w700,
-                              fontSize: 13,
-                              letterSpacing: 0.3,
-                            ),
-                          ),
-                          onPressed:
-                              (!(_usuario != null &&
-                                      tarjetaInfo.usuario > 0 &&
-                                      _usuario == tarjetaInfo.usuario) ||
-                                  estaLiberando)
-                              ? null
-                              : () async {
-                                  setState(() {
-                                    _estacionamientosLiberando[estacion.id] =
-                                        true;
-                                  });
-
-                                  final tarjetaPrevia = _estacionamientosTarjeta
-                                      .where((t) => t.estacionId == estacion.id)
-                                      .toList();
-
-                                  _enProceso.add(estacion.id);
-
-                                  try {
-                                    _updateUIAfterChange(
-                                      estacion.id,
-                                      false,
-                                      '',
-                                    );
-                                    setState(() {
-                                      _estacionamientosTarjeta.removeWhere(
-                                        (t) => t.estacionId == estacion.id,
-                                      );
-                                    });
-                                    await _persistirCacheCompleto();
-                                    await actualizarRegistro(
-                                      estacionId: estacion.id,
-                                      placa: '',
-                                      estado: false,
-                                      token: _token,
-                                    );
-                                    _fetchAndCacheEstacionamientosTarjeta();
-                                    _showCustomSnackBar(
-                                      'Estacionamiento #${estacion.numero} liberado correctamente',
-                                    );
-                                  } catch (e) {
-                                    _updateUIAfterChange(
-                                      estacion.id,
-                                      true,
-                                      estacion.placa,
-                                    );
-                                    setState(() {
-                                      _estacionamientosTarjeta.addAll(
-                                        tarjetaPrevia,
-                                      );
-                                    });
-                                    unawaited(_persistirCacheCompleto());
-                                    _showCustomSnackBar(
-                                      'Error al liberar: $e',
-                                      isError: true,
-                                    );
-                                  } finally {
-                                    if (mounted) {
-                                      setState(() {
-                                        _estacionamientosLiberando.remove(
-                                          estacion.id,
-                                        );
-                                      });
-                                    }
-                                    Future.delayed(
-                                      const Duration(seconds: 2),
-                                      () => _enProceso.remove(estacion.id),
-                                    );
-                                  }
-                                },
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  elevation: esMiTarjeta ? 2 : 0,
+                                  shadowColor: esMiTarjeta
+                                      ? const Color(
+                                          0xFF0D47A1,
+                                        ).withValues(alpha: 0.4)
+                                      : Colors.transparent,
+                                ),
+                                icon: estaLiberando
+                                    ? const SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Colors.white,
+                                        ),
+                                      )
+                                    : Icon(
+                                        esMiTarjeta
+                                            ? Icons.exit_to_app_rounded
+                                            : Icons.lock_rounded,
+                                        size: 18,
+                                      ),
+                                label: Text(
+                                  estaLiberando
+                                      ? 'Liberando...'
+                                      : esMiTarjeta
+                                      ? 'Liberar'
+                                      : 'No disponible',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 12,
+                                    letterSpacing: 0.3,
+                                  ),
+                                ),
+                                onPressed: (!esMiTarjeta || estaLiberando)
+                                    ? null
+                                    : () {
+                                        _ejecutarLiberacion(estacion.id);
+                                      },
+                              ),
+                            );
+                          },
                         ),
                       ],
                     ),
