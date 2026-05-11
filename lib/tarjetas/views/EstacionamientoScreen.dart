@@ -179,6 +179,10 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
     final ws = ServicioWebSocket.instancia;
     ws.reanudar(); // restaura heartbeat normal o reconecta
 
+    // Refrescar datos desde SharedPreferences (el servicio persistente
+    // pudo haber liberado tarjetas mientras la app estaba en background)
+    unawaited(_recargarDesdePrefs());
+
     // Si hubo datos WS en background, refrescar UI de una sola vez
     if (_hayDatosPendientesUI) {
       _hayDatosPendientesUI = false;
@@ -199,6 +203,46 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
           _iniciarFallbackPolling();
         }
       });
+    }
+  }
+
+  /// Recarga los datos desde SharedPreferences para reflejar cambios
+  /// del servicio persistente Android (liberaciones automáticas).
+  Future<void> _recargarDesdePrefs() async {
+    if (!mounted || _appEnSegundoPlano) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+
+      // Leer estacionamientos
+      final estJson = prefs.getString('estacionamientos');
+      if (estJson == null) return;
+      final List<dynamic> estList = json.decode(estJson);
+      final nuevasEstaciones = estList
+          .map((e) => Estacionamiento.fromJson(e as Map<String, dynamic>))
+          .toList();
+      nuevasEstaciones.sort((a, b) => a.numero.compareTo(b.numero));
+
+      // Leer tarjetas
+      final tarJson = prefs.getString('estacionamientos_tarjeta');
+      List<Estacionamiento_Tarjeta> nuevasTarjetas = [];
+      if (tarJson != null) {
+        final List<dynamic> tarList = json.decode(tarJson);
+        nuevasTarjetas = tarList
+            .map((e) => _parseEstacionamientoTarjetaFromJson(e))
+            .whereType<Estacionamiento_Tarjeta>()
+            .toList();
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _estaciones = nuevasEstaciones;
+        _estacionamientosTarjeta = nuevasTarjetas;
+        _filteredEstaciones = _filterEstaciones(_searchQuery);
+        _rangedEstaciones = _computeRangedEstaciones(_filteredEstaciones);
+      });
+      debugPrint('[REINTENTAR]  Datos recargados desde SharedPreferences');
+    } catch (e) {
+      debugPrint('[ADVERTENCIA]  Error recargando desde prefs: $e');
     }
   }
 
