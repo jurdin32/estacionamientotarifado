@@ -1,5 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:estacionamientotarifado/core/colores.dart';
+import 'package:estacionamientotarifado/shared/widgets/campo_busqueda_app.dart';
+import 'package:estacionamientotarifado/shared/widgets/encabezado_modulo_app.dart';
+import 'package:estacionamientotarifado/shared/widgets/estado_carga_app.dart';
+import 'package:estacionamientotarifado/shared/widgets/tarjeta_lista_app.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:estacionamientotarifado/servicios/httpMonitorizado.dart';
@@ -15,9 +20,9 @@ class PersonasRegistradasScreen extends StatefulWidget {
 }
 
 class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
-  static const Color _primary = Color(0xFF0A1628);
-  static const Color _accent = Color(0xFF1565C0);
-  static const Color _fondo = Color(0xFFF0F4FF);
+  static const Color _primary = AppColores.primario;
+  static const Color _accent = AppColores.acentoAdmin;
+  static const Color _fondo = AppColores.acentoFondo;
 
   final TextEditingController _searchController = TextEditingController();
   bool _isLoading = false;
@@ -154,9 +159,9 @@ class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
       case 'AM':
         return const Color(0xFF2E7D32);
       case 'DC':
-        return const Color(0xFF1565C0);
+        return AppColores.acentoAdmin;
       default:
-        return const Color(0xFF555555);
+        return AppColores.textoSecundario;
     }
   }
 
@@ -173,11 +178,7 @@ class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
               width: double.infinity,
               padding: const EdgeInsets.all(20),
               decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFF0A1628), Color(0xFF000000)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
+                gradient: AppColores.gradientePrincipal,
               ),
               child: const Row(
                 children: [
@@ -240,11 +241,7 @@ class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
         elevation: 0,
         flexibleSpace: Container(
           decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              colors: [Color(0xFF0A1628), Color(0xFF000000)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
+            gradient: AppColores.gradientePrincipal,
           ),
         ),
         actions: [
@@ -264,7 +261,7 @@ class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
           ? FloatingActionButton.extended(
               heroTag: 'fab_nuevo_beneficiario',
               onPressed: _abrirFormulario,
-              backgroundColor: const Color(0xFF1565C0),
+              backgroundColor: AppColores.acentoAdmin,
               foregroundColor: Colors.white,
               icon: const Icon(Icons.person_add_rounded),
               label: const Text('Nuevo'),
@@ -283,7 +280,6 @@ class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
 
   // ── Panel de búsqueda ──────────────────────────────────────────────────────
   Widget _buildSearchPanel() {
-    final size = MediaQuery.of(context).size;
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -297,86 +293,24 @@ class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
       ),
       child: Column(
         children: [
-          // Banda superior con identidad
-          Container(
-            width: double.infinity,
-            padding: EdgeInsets.fromLTRB(
-              size.width * 0.04,
-              size.width * 0.04,
-              size.width * 0.04,
-              size.width * 0.03,
-            ),
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFF0A1628), Color(0xFF000000)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  padding: EdgeInsets.all(size.width * 0.025),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.2),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    Icons.people_alt_rounded,
-                    color: Colors.white,
-                    size: size.width * 0.055,
-                  ),
-                ),
-                SizedBox(width: size.width * 0.03),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'SIMERT',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: size.width * 0.045,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    Text(
-                      'Registro de Beneficiarios',
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.85),
-                        fontSize: size.width * 0.03,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
+          const EncabezadoModuloApp(
+            icono: Icons.people_alt_rounded,
+            subtitulo: 'Registro de Beneficiarios',
           ),
           // Campo de búsqueda
           Padding(
-            padding: EdgeInsets.all(size.width * 0.04),
-            child: TextField(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+            child: CampoBusquedaApp(
               controller: _searchController,
-              decoration: InputDecoration(
-                labelText: 'Buscar beneficiario',
-                hintText: 'Nombre, cédula, placa…',
-                prefixIcon: const Icon(Icons.search_rounded, color: _primary),
-                suffixIcon: _searchController.text.isNotEmpty
-                    ? IconButton(
-                        icon: Icon(Icons.clear, color: Colors.grey[500]),
-                        onPressed: () => _searchController.clear(),
-                      )
-                    : null,
-                filled: true,
-                fillColor: Colors.grey.shade50,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
-                ),
-                contentPadding: EdgeInsets.symmetric(
-                  vertical: size.height * 0.015,
-                  horizontal: 16,
-                ),
-              ),
+              labelText: 'Buscar beneficiario',
+              hintText: 'Nombre, cédula, placa…',
+              filledColor: Colors.grey.shade50,
+              onSearch: () {
+                FocusScope.of(context).unfocus();
+                _onSearchChanged();
+              },
+              onChanged: (_) => _onSearchChanged(),
+              onClear: () => _onSearchChanged(),
             ),
           ),
         ],
@@ -484,53 +418,11 @@ class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
 
   // ── Estados ────────────────────────────────────────────────────────────────
   Widget _buildLoadingState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(24),
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [_primary, _accent],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.people_alt_rounded,
-              size: 40,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 20),
-          const Text(
-            'SIMERT',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: _primary,
-              letterSpacing: 1.2,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Cargando beneficiarios…',
-            style: TextStyle(fontSize: 13, color: Colors.grey[600]),
-          ),
-          const SizedBox(height: 20),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 48),
-            child: LinearProgressIndicator(
-              backgroundColor: Colors.grey.shade200,
-              valueColor: const AlwaysStoppedAnimation<Color>(_accent),
-              minHeight: 3,
-              borderRadius: BorderRadius.circular(4),
-            ),
-          ),
-        ],
-      ),
+    return const EstadoCargaApp(
+      icono: Icons.people_alt_rounded,
+      mensaje: 'Cargando beneficiarios…',
+      colorInicio: _primary,
+      colorFin: _accent,
     );
   }
 
@@ -678,137 +570,112 @@ class _PersonasRegistradasScreenState extends State<PersonasRegistradasScreen> {
         ? const Color(0xFF2E7D32)
         : const Color(0xFFC62828);
 
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: 5),
-      elevation: 2,
-      shadowColor: colorTipo.withValues(alpha: 0.2),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
-        side: BorderSide(color: colorTipo.withValues(alpha: 0.3), width: 1),
+    return TarjetaListaApp(
+      colorAcento: colorTipo,
+      onTap: () => _mostrarDetalle(p),
+      avatar: Container(
+        width: 42,
+        height: 42,
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.2),
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white.withValues(alpha: 0.6)),
+        ),
+        child: Center(
+          child: Text(
+            inicial,
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w800,
+              fontSize: 16,
+            ),
+          ),
+        ),
       ),
-      color: Colors.white,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: () => _mostrarDetalle(p),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Row(
-            children: [
-              CircleAvatar(
-                radius: 24,
-                backgroundColor: colorTipo.withValues(alpha: 0.12),
-                child: Text(
-                  inicial,
-                  style: TextStyle(
-                    color: colorTipo,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      propietario,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                        color: _primary,
-                      ),
+      titulo: propietario,
+      subtitulo: '$cedula  ·  $placa',
+      encabezadoDerecha: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Text(
+          activo ? 'Activo' : 'Inactivo',
+          style: TextStyle(
+            color: activoColor,
+            fontWeight: FontWeight.w700,
+            fontSize: 10,
+          ),
+        ),
+      ),
+      cuerpo: Row(
+        children: [
+          Expanded(
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                if (marca.isNotEmpty || modelo.isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
                     ),
-                    Text(
-                      '$cedula  ·  $placa',
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      '$marca $modelo'.trim(),
                       style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey.shade600,
+                        fontSize: 10.5,
+                        color: Colors.grey.shade700,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
-                    if (marca.isNotEmpty || modelo.isNotEmpty)
-                      Text(
-                        '$marca $modelo'.trim(),
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.grey.shade500,
-                        ),
+                  ),
+                if (tipo != null)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: colorTipo.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: colorTipo.withValues(alpha: 0.35),
                       ),
-                    const SizedBox(height: 6),
-                    Row(
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        if (tipo != null) ...[
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color: colorTipo.withValues(alpha: 0.12),
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(
-                                color: colorTipo.withValues(alpha: 0.4),
-                              ),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  tipo == 'AM'
-                                      ? Icons.elderly_rounded
-                                      : Icons.accessible_rounded,
-                                  size: 11,
-                                  color: colorTipo,
-                                ),
-                                const SizedBox(width: 4),
-                                Text(
-                                  _labelTipo(tipo),
-                                  style: TextStyle(
-                                    color: colorTipo,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 10,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                        ],
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            color: activoColor.withValues(alpha: 0.09),
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(
-                              color: activoColor.withValues(alpha: 0.35),
-                            ),
-                          ),
-                          child: Text(
-                            activo ? 'Activo' : 'Inactivo',
-                            style: TextStyle(
-                              color: activoColor,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 10,
-                            ),
+                        Icon(
+                          tipo == 'AM'
+                              ? Icons.elderly_rounded
+                              : Icons.accessible_rounded,
+                          size: 11,
+                          color: colorTipo,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          _labelTipo(tipo),
+                          style: TextStyle(
+                            color: colorTipo,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 10,
                           ),
                         ),
                       ],
                     ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              const Icon(
-                Icons.chevron_right_rounded,
-                color: Colors.grey,
-                size: 20,
-              ),
-            ],
+                  ),
+              ],
+            ),
           ),
-        ),
+          const SizedBox(width: 8),
+          const Icon(Icons.chevron_right_rounded, color: Colors.grey, size: 20),
+        ],
       ),
     );
   }
@@ -1023,9 +890,6 @@ class _DetallePersona extends StatelessWidget {
     this.onEditar,
   });
 
-  static const Color _primary = Color(0xFF0A1628);
-  static const Color _accent = Color(0xFF1565C0);
-
   String _labelTipo(String? tipo) {
     switch (tipo) {
       case 'AM':
@@ -1095,11 +959,7 @@ class _DetallePersona extends StatelessWidget {
               width: double.infinity,
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
               decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [_primary, _accent],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
+                gradient: AppColores.gradientePrincipal,
                 borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
               ),
               child: Row(
@@ -1220,7 +1080,7 @@ class _DetallePersona extends StatelessWidget {
                   const Divider(
                     height: 1,
                     thickness: 1,
-                    color: Color(0xFFF0F4FF),
+                    color: AppColores.acentoFondo,
                   ),
                   const SizedBox(height: 12),
                   _SectionLabel(label: 'Vehículo'),
@@ -1275,7 +1135,7 @@ class _DetallePersona extends StatelessWidget {
                   const Divider(
                     height: 1,
                     thickness: 1,
-                    color: Color(0xFFF0F4FF),
+                    color: AppColores.acentoFondo,
                   ),
                   const SizedBox(height: 12),
                   _SectionLabel(label: 'Vigencia PCIR'),
@@ -1294,7 +1154,7 @@ class _DetallePersona extends StatelessWidget {
                   const Divider(
                     height: 1,
                     thickness: 1,
-                    color: Color(0xFFF0F4FF),
+                    color: AppColores.acentoFondo,
                   ),
                   const SizedBox(height: 12),
                   _SectionLabel(label: 'Registro'),
@@ -1327,7 +1187,7 @@ class _DetallePersona extends StatelessWidget {
                         icon: const Icon(Icons.edit_rounded, size: 18),
                         label: const Text('Editar beneficiario'),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF1565C0),
+                          backgroundColor: AppColores.acentoAdmin,
                           foregroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(vertical: 13),
                           shape: RoundedRectangleBorder(
@@ -1361,11 +1221,7 @@ class _SectionLabel extends StatelessWidget {
           width: 3,
           height: 14,
           decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Color(0xFF0A1628), Color(0xFF000000)],
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-            ),
+            gradient: AppColores.gradientePrincipal,
             borderRadius: BorderRadius.circular(2),
           ),
         ),
@@ -1375,7 +1231,7 @@ class _SectionLabel extends StatelessWidget {
           style: const TextStyle(
             fontSize: 10,
             fontWeight: FontWeight.w700,
-            color: Color(0xFF0A1628),
+            color: AppColores.primario,
             letterSpacing: 0.8,
           ),
         ),
@@ -1407,7 +1263,7 @@ class _InfoRow extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 15, color: const Color(0xFF1565C0)),
+          Icon(icon, size: 15, color: AppColores.acentoAdmin),
           const SizedBox(width: 7),
           SizedBox(
             width: 130,
@@ -1425,7 +1281,7 @@ class _InfoRow extends StatelessWidget {
               value,
               style: TextStyle(
                 fontSize: 13,
-                color: highlight ? const Color(0xFF0A1628) : Colors.grey[800],
+                color: highlight ? AppColores.primario : Colors.grey[800],
                 fontWeight: highlight ? FontWeight.w700 : FontWeight.w500,
                 fontStyle: italic ? FontStyle.italic : FontStyle.normal,
               ),
@@ -1453,8 +1309,8 @@ class _FormBeneficiario extends StatefulWidget {
 }
 
 class _FormBeneficiarioState extends State<_FormBeneficiario> {
-  static const Color _primary = Color(0xFF0A1628);
-  static const Color _accent = Color(0xFF1565C0);
+  static const Color _primary = AppColores.primario;
+  static const Color _accent = AppColores.acentoAdmin;
 
   final _formKey = GlobalKey<FormState>();
   bool _guardando = false;

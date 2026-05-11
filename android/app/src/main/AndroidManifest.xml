@@ -18,6 +18,12 @@
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" tools:targetApi="s" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" tools:targetApi="s" />
     
+    <!-- Permisos para servicio de background -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    
     <!-- Características requeridas -->
     <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
@@ -26,6 +32,7 @@
         android:label="SIMERT"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
+        android:resizeableActivity="true"
         android:requestLegacyExternalStorage="false">
         <activity
             android:name=".MainActivity"
@@ -47,7 +54,21 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- Android 16+: quitar orientación forzada en pantallas grandes -->
+        <activity
+            android:name="com.journeyapps.barcodescanner.CaptureActivity"
+            android:screenOrientation="unspecified"
+            tools:replace="android:screenOrientation" />
+
+        <!-- Servicio foreground que evita que Android mate el proceso
+             incluso cuando el usuario cierra la app desde el multitasking -->
+        <service
+            android:name=".ServicioPersistente"
+            android:foregroundServiceType="specialUse"
+            android:exported="false" />
     </application>
+
     
     <queries>
         <intent>

@@ -2,6 +2,31 @@ import 'dart:convert';
 import 'package:estacionamientotarifado/tarjetas/models/Estacionamiento.dart';
 import 'package:estacionamientotarifado/servicios/httpMonitorizado.dart';
 
+/// Error lanzado cuando el servidor responde con un código HTTP de error.
+class ApiStatusException implements Exception {
+  final int statusCode;
+  final String body;
+
+  ApiStatusException(this.statusCode, this.body);
+
+  @override
+  String toString() =>
+      'ApiStatusException(statusCode: $statusCode, body: $body)';
+}
+
+/// Error específico para conflicto de concurrencia (HTTP 409).
+/// Se lanza cuando otro usuario ya registró la misma estación.
+class ApiConflictException implements Exception {
+  final int estacionId;
+  final String body;
+
+  ApiConflictException(this.estacionId, this.body);
+
+  @override
+  String toString() =>
+      'ApiConflictException(estacionId: $estacionId, body: $body)';
+}
+
 const String _urlEstacion =
     'https://simert.transitoelguabo.gob.ec/api/estacion/';
 
@@ -21,6 +46,27 @@ Future<List<Estacionamiento>> fetchEstacionamientos({String token = ''}) async {
   } else {
     throw Exception('Error al cargar las estaciones');
   }
+}
+
+/// Obtiene UNA estación específica por su ID.
+/// Útil para verificar el estado actual antes de registrar.
+Future<Estacionamiento?> fetchEstacionamientoPorId(
+  int estacionId, {
+  String token = '',
+}) async {
+  try {
+    final response = await HttpMonitorizado.get(
+      _uriTkEstacion('$estacionId/', token),
+    ).timeout(const Duration(seconds: 5));
+    if (response.statusCode == 200) {
+      return Estacionamiento.fromJson(
+        json.decode(response.body) as Map<String, dynamic>,
+      );
+    }
+  } catch (_) {
+    // Silencioso: si falla, confiar en estado local
+  }
+  return null;
 }
 
 Future<void> actualizarRegistro({
@@ -49,14 +95,17 @@ Future<void> actualizarRegistro({
 
     if (response.statusCode == 200) {
       print('Registro actualizado correctamente');
+    } else if (response.statusCode == 409) {
+      // Conflicto: otro usuario ya modificó este recurso
+      throw ApiConflictException(estacionId, response.body);
     } else {
       print(
         'Error al actualizar registro: ${response.statusCode} ${response.body}',
       );
-      throw Exception('Error al actualizar registro');
+      throw ApiStatusException(response.statusCode, response.body);
     }
   } catch (e) {
     print('Error en la solicitud: $e');
-    throw Exception('Error en la solicitud');
+    rethrow;
   }
 }

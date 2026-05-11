@@ -1,3 +1,7 @@
+import 'package:estacionamientotarifado/core/colores.dart';
+import 'package:estacionamientotarifado/shared/widgets/campo_busqueda_app.dart';
+import 'package:estacionamientotarifado/shared/widgets/encabezado_modulo_app.dart';
+import 'package:estacionamientotarifado/shared/widgets/estado_carga_app.dart';
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
@@ -399,23 +403,19 @@ class _ConsultaNotificacionesScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF0F4FF),
+      backgroundColor: AppColores.acentoFondo,
       appBar: AppBar(
         centerTitle: true,
         title: const Text(
           'Consulta de Multas',
           style: TextStyle(fontWeight: FontWeight.bold),
         ),
-        backgroundColor: const Color(0xFF0A1628),
+        backgroundColor: AppColores.primario,
         foregroundColor: Colors.white,
         elevation: 0,
         flexibleSpace: Container(
           decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              colors: [Color(0xFF0A1628), Color(0xFF000000)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
+            gradient: AppColores.gradientePrincipal,
           ),
         ),
         actions: [
@@ -438,7 +438,6 @@ class _ConsultaNotificacionesScreenState
   }
 
   Widget _buildSearchPanel() {
-    final size = MediaQuery.of(context).size;
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -452,71 +451,21 @@ class _ConsultaNotificacionesScreenState
       ),
       child: Column(
         children: [
-          // Banda de encabezado
-          Container(
-            width: double.infinity,
-            padding: EdgeInsets.fromLTRB(
-              size.width * 0.04,
-              size.width * 0.04,
-              size.width * 0.04,
-              size.width * 0.03,
-            ),
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFF0A1628), Color(0xFF000000)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  padding: EdgeInsets.all(size.width * 0.025),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.2),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    Icons.gavel,
-                    color: Colors.white,
-                    size: size.width * 0.055,
-                  ),
-                ),
-                SizedBox(width: size.width * 0.03),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'SIMERT',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: size.width * 0.045,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    Text(
-                      'Sistema de Multas Electrónicas',
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.85),
-                        fontSize: size.width * 0.03,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
+          const EncabezadoModuloApp(
+            icono: Icons.gavel,
+            subtitulo: 'Sistema de Multas Electrónicas',
           ),
 
           // Contenido de búsqueda
           Padding(
-            padding: EdgeInsets.all(size.width * 0.04),
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
             child: Column(
               children: [
                 // Selector de tipo
                 Container(
                   padding: const EdgeInsets.all(4),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF0F4FF),
+                    color: AppColores.acentoFondo,
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Row(
@@ -539,103 +488,45 @@ class _ConsultaNotificacionesScreenState
                     ],
                   ),
                 ),
-                SizedBox(height: size.height * 0.018),
+                const SizedBox(height: 10),
 
                 // Campo de búsqueda
-                TextField(
+                CampoBusquedaApp(
                   controller: _tipoBusqueda == 'placa'
                       ? _placaController
                       : _cedulaController,
-                  decoration: InputDecoration(
-                    labelText: _tipoBusqueda == 'placa'
-                        ? 'Placa del vehículo'
-                        : 'Cédula del conductor',
-                    hintText: _tipoBusqueda == 'placa'
-                        ? 'Ej: TBG7906'
-                        : 'Ej: 1805177035',
-                    prefixIcon: Icon(
-                      _tipoBusqueda == 'placa'
-                          ? Icons.directions_car
-                          : Icons.badge,
-                      color: const Color(0xFF0A1628),
-                    ),
-                    suffixIcon: IconButton(
-                      icon: Icon(Icons.clear, color: Colors.grey[500]),
-                      onPressed: () {
-                        if (_tipoBusqueda == 'placa') {
-                          _placaController.clear();
-                        } else {
-                          _cedulaController.clear();
-                        }
-                      },
-                    ),
-                    filled: true,
-                    fillColor: Colors.grey.shade50,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none,
-                    ),
-                    contentPadding: EdgeInsets.symmetric(
-                      vertical: size.height * 0.015,
-                      horizontal: 16,
-                    ),
-                  ),
+                  labelText: _tipoBusqueda == 'placa'
+                      ? 'Placa del vehículo'
+                      : 'Cédula del conductor',
+                  hintText: _tipoBusqueda == 'placa'
+                      ? 'Ej: TBG7906'
+                      : 'Ej: 1805177035',
+                  onSearch: _buscar,
+                  filledColor: Colors.grey.shade50,
+                  onClear: () {
+                    if (_tipoBusqueda == 'placa') {
+                      _placaController.clear();
+                    } else {
+                      _cedulaController.clear();
+                    }
+                    _limpiar();
+                  },
                   textCapitalization: _tipoBusqueda == 'placa'
                       ? TextCapitalization.characters
                       : TextCapitalization.none,
                   inputFormatters: _tipoBusqueda == 'placa'
                       ? [UpperCaseTextFormatter()]
                       : null,
-                  onSubmitted: (_) => _buscar(),
                 ),
-                SizedBox(height: size.height * 0.015),
+                const SizedBox(height: 10),
 
                 // Botones
                 Row(
                   children: [
-                    Expanded(
-                      flex: 2,
-                      child: Container(
-                        height: 50,
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [Color(0xFF0A1628), Color(0xFF000000)],
-                            begin: Alignment.centerLeft,
-                            end: Alignment.centerRight,
-                          ),
-                          borderRadius: BorderRadius.circular(12),
-                          boxShadow: [
-                            BoxShadow(
-                              color: const Color(
-                                0xFF001F54,
-                              ).withValues(alpha: 0.3),
-                              blurRadius: 8,
-                              offset: const Offset(0, 3),
-                            ),
-                          ],
-                        ),
-                        child: ElevatedButton.icon(
-                          onPressed: _buscar,
-                          icon: const Icon(Icons.search, size: 20),
-                          label: const Text(
-                            'Buscar',
-                            style: TextStyle(fontWeight: FontWeight.w600),
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.transparent,
-                            foregroundColor: Colors.white,
-                            shadowColor: Colors.transparent,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    SizedBox(width: size.width * 0.03),
+                    const Spacer(),
                     SizedBox(
-                      width: 90,
-                      height: 50,
+                      width: 96,
+                      height: 44,
                       child: OutlinedButton(
                         onPressed: _limpiar,
                         style: OutlinedButton.styleFrom(
@@ -653,7 +544,7 @@ class _ConsultaNotificacionesScreenState
                             SizedBox(width: 4),
                             Text(
                               'Limpiar',
-                              style: TextStyle(fontSize: 13),
+                              style: TextStyle(fontSize: 12.5),
                               overflow: TextOverflow.ellipsis,
                             ),
                           ],
@@ -671,7 +562,7 @@ class _ConsultaNotificacionesScreenState
   }
 
   Widget _buildSearchTypeButton(String value, String text, IconData icon) {
-    const primary = Color(0xFF0A1628);
+    const primary = AppColores.primario;
     final isSelected = _tipoBusqueda == value;
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200),
@@ -741,51 +632,11 @@ class _ConsultaNotificacionesScreenState
   }
 
   Widget _buildLoadingState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(24),
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFF0A1628), Color(0xFF000000)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(Icons.gavel, size: 40, color: Colors.white),
-          ),
-          const SizedBox(height: 20),
-          const Text(
-            'SIMERT',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: Color(0xFF0A1628),
-              letterSpacing: 1.2,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Buscando notificaciones...',
-            style: TextStyle(fontSize: 13, color: Colors.grey[600]),
-          ),
-          const SizedBox(height: 20),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 48),
-            child: LinearProgressIndicator(
-              backgroundColor: Colors.grey.shade200,
-              valueColor: const AlwaysStoppedAnimation<Color>(
-                Color(0xFF1565C0),
-              ),
-              minHeight: 3,
-              borderRadius: BorderRadius.circular(4),
-            ),
-          ),
-        ],
-      ),
+    return const EstadoCargaApp(
+      icono: Icons.gavel,
+      mensaje: 'Buscando notificaciones...',
+      colorInicio: AppColores.primario,
+      colorFin: AppColores.acentoAdmin,
     );
   }
 
@@ -1077,11 +928,7 @@ class _ConsultaNotificacionesScreenState
             Container(
               padding: EdgeInsets.all(size.width * 0.07),
               decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFF0A1628), Color(0xFF000000)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
+                gradient: AppColores.gradientePrincipal,
                 shape: BoxShape.circle,
               ),
               child: Icon(
@@ -1096,7 +943,7 @@ class _ConsultaNotificacionesScreenState
               style: TextStyle(
                 fontSize: size.width * 0.047,
                 fontWeight: FontWeight.w700,
-                color: const Color(0xFF0A1628),
+                color: AppColores.primario,
               ),
             ),
             SizedBox(height: size.height * 0.012),
@@ -1125,14 +972,14 @@ class _ConsultaNotificacionesScreenState
                 const Icon(
                   Icons.arrow_upward_rounded,
                   size: 14,
-                  color: Color(0xFF1565C0),
+                  color: AppColores.acentoAdmin,
                 ),
                 const SizedBox(width: 4),
                 Text(
                   'Use el buscador de arriba',
                   style: TextStyle(
                     fontSize: size.width * 0.033,
-                    color: const Color(0xFF1565C0),
+                    color: AppColores.acentoAdmin,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
@@ -1148,22 +995,20 @@ class _ConsultaNotificacionesScreenState
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
       decoration: BoxDecoration(
-        color: const Color(0xFF0A1628).withValues(alpha: 0.07),
+        color: AppColores.primario.withValues(alpha: 0.07),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: const Color(0xFF0A1628).withValues(alpha: 0.2),
-        ),
+        border: Border.all(color: AppColores.primario.withValues(alpha: 0.2)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 14, color: const Color(0xFF0A1628)),
+          Icon(icon, size: 14, color: AppColores.primario),
           const SizedBox(width: 6),
           Text(
             label,
             style: const TextStyle(
               fontSize: 13,
-              color: Color(0xFF0A1628),
+              color: AppColores.primario,
               fontWeight: FontWeight.w500,
             ),
           ),
@@ -1185,11 +1030,7 @@ class _ConsultaNotificacionesScreenState
               width: double.infinity,
               padding: const EdgeInsets.all(20),
               decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFF0A1628), Color(0xFF000000)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
+                gradient: AppColores.gradientePrincipal,
               ),
               child: const Row(
                 children: [
@@ -1233,7 +1074,7 @@ class _ConsultaNotificacionesScreenState
                       child: const Text(
                         'Cerrar',
                         style: TextStyle(
-                          color: Color(0xFF0A1628),
+                          color: AppColores.primario,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -1265,7 +1106,7 @@ class _NotificacionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const primary = Color(0xFF0A1628);
+    const primary = AppColores.primario;
     final bool impugnacion = notificacion.notificacion.impugnacion;
     // notificacion.notificacion.estado: true=PAGADO, false=IMPAGO
     final bool pagado = notificacion.notificacion.estado;
@@ -1310,11 +1151,7 @@ class _NotificacionCard extends StatelessWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFF0A1628), Color(0xFF000000)],
-                  begin: Alignment.centerLeft,
-                  end: Alignment.centerRight,
-                ),
+                gradient: AppColores.gradientePrincipal,
               ),
               child: Row(
                 children: [
@@ -1406,7 +1243,7 @@ class _NotificacionCard extends StatelessWidget {
                   const Divider(
                     height: 1,
                     thickness: 1,
-                    color: Color(0xFFF0F4FF),
+                    color: AppColores.acentoFondo,
                   ),
                   const SizedBox(height: 10),
 
@@ -1504,7 +1341,7 @@ class _NotificacionCard extends StatelessWidget {
                   const Divider(
                     height: 1,
                     thickness: 1,
-                    color: Color(0xFFF0F4FF),
+                    color: AppColores.acentoFondo,
                   ),
                   const SizedBox(height: 10),
 
@@ -1572,7 +1409,7 @@ class _NotificacionCard extends StatelessWidget {
                   const Divider(
                     height: 1,
                     thickness: 1,
-                    color: Color(0xFFF0F4FF),
+                    color: AppColores.acentoFondo,
                   ),
                   const SizedBox(height: 10),
 
@@ -1597,9 +1434,9 @@ class _NotificacionCard extends StatelessWidget {
                         style: TextStyle(fontWeight: FontWeight.w600),
                       ),
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFF0A1628),
+                        foregroundColor: AppColores.primario,
                         side: const BorderSide(
-                          color: Color(0xFF0A1628),
+                          color: AppColores.primario,
                           width: 1.5,
                         ),
                         shape: RoundedRectangleBorder(
@@ -1631,11 +1468,7 @@ class _SectionLabel extends StatelessWidget {
           width: 3,
           height: 14,
           decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Color(0xFF0A1628), Color(0xFF000000)],
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-            ),
+            gradient: AppColores.gradientePrincipal,
             borderRadius: BorderRadius.circular(2),
           ),
         ),
@@ -1645,7 +1478,7 @@ class _SectionLabel extends StatelessWidget {
           style: const TextStyle(
             fontSize: 10,
             fontWeight: FontWeight.w700,
-            color: Color(0xFF0A1628),
+            color: AppColores.primario,
             letterSpacing: 0.8,
           ),
         ),
@@ -1679,7 +1512,7 @@ class _InfoRow extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 15, color: const Color(0xFF1565C0)),
+          Icon(icon, size: 15, color: AppColores.acentoAdmin),
           const SizedBox(width: 7),
           SizedBox(
             width: 110,
@@ -1697,7 +1530,7 @@ class _InfoRow extends StatelessWidget {
               value,
               style: TextStyle(
                 fontSize: 13,
-                color: highlight ? const Color(0xFF0A1628) : Colors.grey[800],
+                color: highlight ? AppColores.primario : Colors.grey[800],
                 fontWeight: highlight ? FontWeight.w700 : FontWeight.w500,
                 fontStyle: italic ? FontStyle.italic : FontStyle.normal,
               ),

@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.simert.estacionamiento",
+      "sha256_cert_fingerprints": [
+        "19:34:C2:D5:9B:4D:48:87:E4:0A:44:CD:8A:20:D9:65:EB:25:A8:35:2C:63:B5:4F:71:3E:38:02:4E:AE:54:4F"
+      ]
+    }
+  }
+]

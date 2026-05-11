@@ -228,7 +228,7 @@ class ServicioWebSocket {
 
   void _iniciarHeartbeat() {
     _heartbeatTimer?.cancel();
-    _heartbeatTimer = Timer.periodic(const Duration(seconds: 45), (_) {
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (_conectado) {
         enviar({'tipo': 'ping'});
       }

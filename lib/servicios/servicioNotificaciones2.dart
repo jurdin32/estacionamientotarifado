@@ -11,21 +11,22 @@ import 'package:shared_preferences/shared_preferences.dart';
 // Válida durante todo el mes; al cambiar de mes se reemplaza automáticamente.
 // ══════════════════════════════════════════════════════════════════════════════
 class CacheDetallesService {
-  static String _claveActual() {
+  static String _claveActual([String scope = '']) {
     final now = DateTime.now();
-    return 'detalles_mes_${now.year}_${now.month.toString().padLeft(2, '0')}';
+    final suffix = scope.isEmpty ? '' : '_$scope';
+    return 'detalles_mes_${now.year}_${now.month.toString().padLeft(2, '0')}$suffix';
   }
 
   /// Retorna true si ya existe caché para el mes actual.
-  static Future<bool> tieneCacheMesActual() async {
+  static Future<bool> tieneCacheMesActual({String scope = ''}) async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.containsKey(_claveActual());
+    return prefs.containsKey(_claveActual(scope));
   }
 
   /// Lee todos los items del mes actual desde SharedPreferences.
-  static Future<List<Map<String, dynamic>>> leerMes() async {
+  static Future<List<Map<String, dynamic>>> leerMes({String scope = ''}) async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_claveActual());
+    final raw = prefs.getString(_claveActual(scope));
     if (raw == null) return [];
     try {
       final List<dynamic> list = json.decode(raw);
@@ -51,25 +52,32 @@ class CacheDetallesService {
   }
 
   /// Persiste la lista completa del mes y elimina el caché del mes anterior.
-  static Future<void> guardarMes(List<Map<String, dynamic>> items) async {
+  static Future<void> guardarMes(
+    List<Map<String, dynamic>> items, {
+    String scope = '',
+  }) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_claveActual(), json.encode(items));
+    await prefs.setString(_claveActual(scope), json.encode(items));
     // Limpiar mes anterior
     final now = DateTime.now();
     final prevYear = now.month == 1 ? now.year - 1 : now.year;
     final prevMonth = now.month == 1 ? 12 : now.month - 1;
+    final suffix = scope.isEmpty ? '' : '_$scope';
     final prevKey =
-        'detalles_mes_${prevYear}_${prevMonth.toString().padLeft(2, '0')}';
+        'detalles_mes_${prevYear}_${prevMonth.toString().padLeft(2, '0')}$suffix';
     await prefs.remove(prevKey);
   }
 
   /// Inserta o actualiza un item en el caché del mes (clave de dedup: idNotificacion).
-  static Future<void> agregarItem(Map<String, dynamic> item) async {
-    final items = await leerMes();
+  static Future<void> agregarItem(
+    Map<String, dynamic> item, {
+    String scope = '',
+  }) async {
+    final items = await leerMes(scope: scope);
     final idNotif = item['idNotificacion'] as int;
     items.removeWhere((e) => (e['idNotificacion'] as int?) == idNotif);
     items.insert(0, item);
-    await guardarMes(items);
+    await guardarMes(items, scope: scope);
   }
 }
 
@@ -137,24 +145,72 @@ class NotifMesCache {
 class NotificacionService {
   static const String baseUrl = 'https://simert.transitoelguabo.gob.ec/api';
 
-  Future<List<Notificacion>> getNotificaciones({
-    String? notificacionId,
-    String? cedula,
-    String? placa,
-    String? username,
-    String? fechaInicio,
-    String? fechaFin,
+  String _limpiarTexto(dynamic v) {
+    final s = (v ?? '').toString().trim();
+    if (s.isEmpty || s.toLowerCase() == 'null') return '';
+    return s;
+  }
+
+  String _primeroNoVacio(Iterable<dynamic> candidatos) {
+    for (final c in candidatos) {
+      final v = _limpiarTexto(c);
+      if (v.isNotEmpty) return v;
+    }
+    return '';
+  }
+
+  int _extraerUsuarioEmisorId(Map<String, dynamic> notifRaw) {
+    final usuarioRaw = notifRaw['usuario'];
+    if (usuarioRaw is int) return usuarioRaw;
+    if (usuarioRaw is Map<String, dynamic>) {
+      final id = usuarioRaw['id'];
+      if (id is int) return id;
+      return int.tryParse((id ?? '').toString()) ?? 0;
+    }
+    return int.tryParse((notifRaw['usuario_id'] ?? '').toString()) ?? 0;
+  }
+
+  String _extraerUsuarioEmisor(Map<String, dynamic> notifRaw) {
+    final usuarioRaw = notifRaw['usuario'];
+    if (usuarioRaw is Map<String, dynamic>) {
+      final first = _limpiarTexto(usuarioRaw['first_name']);
+      final last = _limpiarTexto(usuarioRaw['last_name']);
+      final full = '$first $last'.trim();
+      if (full.isNotEmpty) return full;
+
+      final username = _limpiarTexto(usuarioRaw['username']);
+      if (username.isNotEmpty) return username;
+
+      final name = _limpiarTexto(usuarioRaw['name']);
+      if (name.isNotEmpty) return name;
+    }
+
+    final directos = <dynamic>[
+      notifRaw['usuario_nombre'],
+      notifRaw['usuario_name'],
+      notifRaw['usuario_username'],
+      notifRaw['username'],
+      notifRaw['name'],
+    ];
+
+    for (final c in directos) {
+      final v = _limpiarTexto(c);
+      if (v.isNotEmpty) return v;
+    }
+
+    return '';
+  }
+
+  Future<List<Notificacion>> _obtenerNotificaciones({
+    required bool soloUsuarioActual,
   }) async {
     try {
-      // Obtener el ID del usuario desde SharedPreferences
       final prefs = await SharedPreferences.getInstance();
-      final userId = prefs.getInt('id')!;
+      final userId = prefs.getInt('id') ?? 0;
 
       if (userId == 0) {
         throw Exception('No se encontró el ID del usuario en las preferencias');
       }
-
-      print('🔗 Solicitando notificaciones para usuario: $userId');
 
       final response = await HttpMonitorizado.get(
         Uri.parse('$baseUrl/notificacion'),
@@ -164,43 +220,41 @@ class NotificacionService {
         },
       ).timeout(const Duration(seconds: 30));
 
-      print('📥 Respuesta HTTP: ${response.statusCode}');
-
-      if (response.statusCode == 200) {
-        final List<dynamic> jsonResponse = json.decode(response.body);
-        print('📊 Cantidad total de notificaciones: ${jsonResponse.length}');
-
-        final List<Notificacion> notificaciones = [];
-        int errores = 0;
-
-        for (var item in jsonResponse) {
-          try {
-            if (item is Map<String, dynamic>) {
-              final notificacion = Notificacion.fromJson(item);
-
-              // Filtrar por ID del usuario
-              if (notificacion.usuario == userId) {
-                notificaciones.add(notificacion);
-              }
-            }
-          } catch (e) {
-            errores++;
-            print('❌ Error procesando item: $e');
-            continue;
-          }
-        }
-
-        print('✅ Notificaciones del usuario $userId: ${notificaciones.length}');
-        print('❌ Errores de procesamiento: $errores');
-
-        return notificaciones;
-      } else {
+      if (response.statusCode != 200) {
         throw Exception('Error HTTP ${response.statusCode}: ${response.body}');
       }
+
+      final List<dynamic> jsonResponse = json.decode(response.body);
+      final List<Notificacion> notificaciones = [];
+
+      for (final item in jsonResponse) {
+        try {
+          if (item is! Map<String, dynamic>) continue;
+          final notificacion = Notificacion.fromJson(item);
+          if (!soloUsuarioActual || notificacion.usuario == userId) {
+            notificaciones.add(notificacion);
+          }
+        } catch (_) {
+          continue;
+        }
+      }
+
+      return notificaciones;
     } catch (e) {
-      print('💥 Error de conexión: $e');
       throw Exception('Error de conexión: $e');
     }
+  }
+
+  Future<List<Notificacion>> getNotificaciones({
+    String? notificacionId,
+    String? cedula,
+    String? placa,
+    String? username,
+    String? fechaInicio,
+    String? fechaFin,
+    bool soloUsuarioActual = true,
+  }) async {
+    return _obtenerNotificaciones(soloUsuarioActual: soloUsuarioActual);
   }
 
   List<Notificacion> filtrarNotificacionesMesActual(
@@ -241,64 +295,100 @@ class NotificacionService {
 
   // Método para obtener TODAS las notificaciones del usuario (sin filtrar por mes)
   Future<List<Notificacion>> getTodasNotificacionesUsuario() async {
-    try {
-      // Obtener el ID del usuario desde SharedPreferences
-      final prefs = await SharedPreferences.getInstance();
-      final userId = prefs.getInt('id');
+    return _obtenerNotificaciones(soloUsuarioActual: true);
+  }
 
-      if (userId == 0) {
-        throw Exception('No se encontró el ID del usuario en las preferencias');
-      }
+  Future<List<Notificacion>> getTodasNotificacionesSistema() async {
+    return _obtenerNotificaciones(soloUsuarioActual: false);
+  }
 
-      print('🔗 Solicitando TODAS las notificaciones para usuario: $userId');
+  Future<Map<String, dynamic>?> getDetallePorNotificacion(
+    int notificacionId,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = (prefs.getString('token') ?? '').trim();
 
-      final response = await HttpMonitorizado.get(
-        Uri.parse('$baseUrl/notificacion'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-      ).timeout(const Duration(seconds: 30));
+    final query = <String, String>{
+      'notificacion__id': '$notificacionId',
+      'notificacion__cedula': '',
+      'notificacion__placa': '',
+      'notificacion__usuario__username': '',
+      'fecha_inicio': '',
+      'fecha_fin': '',
+      if (token.isNotEmpty) '_tk': token,
+    };
 
-      print('📥 Respuesta HTTP: ${response.statusCode}');
+    final uri = Uri.parse(
+      '$baseUrl/notificaciondetalle/',
+    ).replace(queryParameters: query);
 
-      if (response.statusCode == 200) {
-        final List<dynamic> jsonResponse = json.decode(response.body);
-        print('📊 Cantidad total de notificaciones: ${jsonResponse.length}');
+    final response = await HttpMonitorizado.get(
+      uri,
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        if (token.isNotEmpty) 'Authorization': 'Token $token',
+      },
+    ).timeout(const Duration(seconds: 30));
 
-        final List<Notificacion> notificaciones = [];
-        int errores = 0;
-
-        for (var item in jsonResponse) {
-          try {
-            if (item is Map<String, dynamic>) {
-              final notificacion = Notificacion.fromJson(item);
-
-              // Filtrar por ID del usuario
-              if (notificacion.usuario == userId) {
-                notificaciones.add(notificacion);
-              }
-            }
-          } catch (e) {
-            errores++;
-            print('❌ Error procesando item: $e');
-            continue;
-          }
-        }
-
-        print(
-          '✅ Todas las notificaciones del usuario $userId: ${notificaciones.length}',
-        );
-        print('❌ Errores de procesamiento: $errores');
-
-        return notificaciones;
-      } else {
-        throw Exception('Error HTTP ${response.statusCode}: ${response.body}');
-      }
-    } catch (e) {
-      print('💥 Error de conexión: $e');
-      throw Exception('Error de conexión: $e');
+    if (response.statusCode != 200) {
+      throw Exception(
+        'No se pudo consultar detalle de multa (${response.statusCode})',
+      );
     }
+
+    final decoded = json.decode(response.body);
+    if (decoded is! List || decoded.isEmpty) return null;
+
+    for (final item in decoded) {
+      if (item is! Map<String, dynamic>) continue;
+      final notif = item['notificacion'];
+      if (notif is Map<String, dynamic> &&
+          (notif['id'] as int?) == notificacionId) {
+        return item;
+      }
+    }
+
+    final first = decoded.first;
+    return first is Map<String, dynamic> ? first : null;
+  }
+
+  Future<void> actualizarCaracteristicasMulta({
+    required int detalleId,
+    required int multaId,
+    required double total,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = (prefs.getString('token') ?? '').trim();
+
+    final uri = token.isNotEmpty
+        ? Uri.parse(
+            '$baseUrl/notificaciondetalle/$detalleId/',
+          ).replace(queryParameters: {'_tk': token})
+        : Uri.parse('$baseUrl/notificaciondetalle/$detalleId/');
+
+    final payload = json.encode({
+      'multa': multaId,
+      'total': double.parse(total.toStringAsFixed(2)),
+    });
+
+    final response = await HttpMonitorizado.patch(
+      uri,
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        if (token.isNotEmpty) 'Authorization': 'Token $token',
+      },
+      body: payload,
+    ).timeout(const Duration(seconds: 30));
+
+    if (response.statusCode == 200 || response.statusCode == 202) {
+      return;
+    }
+
+    throw Exception(
+      'No se pudo actualizar la multa (${response.statusCode}): ${response.body}',
+    );
   }
 
   // Método para agrupar notificaciones por estado
@@ -328,7 +418,9 @@ class NotificacionService {
     return {'pagadas': pagadas, 'impagas': impagas, 'impugnadas': impugnadas};
   }
 
-  /// Obtiene los detalles de notificaciones del día actual para el usuario.
+  /// Obtiene los detalles de notificaciones del día actual.
+  /// - Si [verTodasUsuarios] es true, no filtra por usuario (modo administrador).
+  /// - Si [verTodasUsuarios] es false, retorna solo del usuario autenticado.
   /// - Si existe caché del mes actual y [forceRefresh] es false, retorna desde caché.
   /// - Si no existe caché o [forceRefresh] es true, consulta la API, guarda en caché
   ///   y retorna solo los registros del día de hoy.
@@ -336,9 +428,15 @@ class NotificacionService {
     int userId,
     List<Multa> multasCache, {
     bool forceRefresh = false,
+    bool verTodasUsuarios = false,
   }) async {
-    if (!forceRefresh && await CacheDetallesService.tieneCacheMesActual()) {
-      return await CacheDetallesService.leerMes();
+    final cacheScope = verTodasUsuarios
+        ? 'reimpresion_all'
+        : 'reimpresion_user_$userId';
+
+    if (!forceRefresh &&
+        await CacheDetallesService.tieneCacheMesActual(scope: cacheScope)) {
+      return await CacheDetallesService.leerMes(scope: cacheScope);
     }
 
     // ── Consultar API con endpoint correcto ──────────────────────────────
@@ -351,12 +449,17 @@ class NotificacionService {
     final fin =
         '${now.year}-${now.month.toString().padLeft(2, '0')}-${ultimoDia.toString().padLeft(2, '0')}';
 
+    final query = <String, String>{
+      'notificacion__id': '',
+      'notificacion__cedula': '',
+      'notificacion__placa': '',
+      'fecha_inicio': inicio,
+      'fecha_fin': fin,
+      if (!verTodasUsuarios) 'notificacion__usuario__username': username,
+    };
     final uri = Uri.parse(
-      '$baseUrl/notificaciondetalle/'
-      '?notificacion__id=&notificacion__cedula=&notificacion__placa='
-      '&notificacion__usuario__username=${Uri.encodeComponent(username)}'
-      '&fecha_inicio=$inicio&fecha_fin=$fin',
-    );
+      '$baseUrl/notificaciondetalle/',
+    ).replace(queryParameters: query);
 
     final response = await HttpMonitorizado.get(
       uri,
@@ -377,6 +480,10 @@ class NotificacionService {
       try {
         final notifRaw = item['notificacion'];
         if (notifRaw is! Map<String, dynamic>) continue;
+        final vehiculoRaw = notifRaw['vehiculo'];
+        final vehiculo = vehiculoRaw is Map<String, dynamic>
+            ? vehiculoRaw
+            : const <String, dynamic>{};
 
         final bool anulado = notifRaw['anulado'] as bool? ?? false;
         final bool eliminado = notifRaw['eliminado'] as bool? ?? false;
@@ -397,10 +504,74 @@ class NotificacionService {
           if (valorMulta == 0.0) valorMulta = m.valor;
         } catch (_) {}
 
+        final nombres = _primeroNoVacio([
+          notifRaw['nombres'],
+          notifRaw['nombre'],
+          notifRaw['propietario'],
+          notifRaw['conductor_nombre'],
+          notifRaw['infractor_nombre'],
+        ]);
+        final apellidos = _primeroNoVacio([
+          notifRaw['apellidos'],
+          notifRaw['apellido'],
+          notifRaw['conductor_apellido'],
+          notifRaw['infractor_apellido'],
+        ]);
+        final nombrePersona = '$nombres $apellidos'.trim().isNotEmpty
+            ? '$nombres $apellidos'.trim()
+            : _primeroNoVacio([
+                notifRaw['conductor'],
+                notifRaw['infractor'],
+                notifRaw['razon_social'],
+              ]);
+
+        final cedula = _primeroNoVacio([
+          notifRaw['cedula'],
+          notifRaw['identificacion'],
+          notifRaw['dni'],
+          notifRaw['documento'],
+        ]);
+        final marca = _primeroNoVacio([
+          notifRaw['marca'],
+          notifRaw['marca_vehiculo'],
+          notifRaw['vehiculo_marca'],
+          vehiculo['marca'],
+        ]);
+        final modelo = _primeroNoVacio([
+          notifRaw['modelo'],
+          notifRaw['modelo_vehiculo'],
+          notifRaw['vehiculo_modelo'],
+          vehiculo['modelo'],
+        ]);
+        final color = _primeroNoVacio([
+          notifRaw['color'],
+          notifRaw['color_vehiculo'],
+          notifRaw['vehiculo_color'],
+          vehiculo['color'],
+        ]);
+        final tipoVehiculo = _primeroNoVacio([
+          notifRaw['tipo_vehiculo'],
+          notifRaw['tipoVehiculo'],
+          notifRaw['clase_vehiculo'],
+          notifRaw['claseVehiculo'],
+          vehiculo['tipo_vehiculo'],
+          vehiculo['tipoVehiculo'],
+          vehiculo['clase_vehiculo'],
+          vehiculo['claseVehiculo'],
+        ]);
+
         result.add({
           'idDetalle': item['id'] ?? 0,
           'idNotificacion': notifRaw['id'] ?? 0,
+          'usuarioId': _extraerUsuarioEmisorId(notifRaw),
+          'usuarioEmisor': _extraerUsuarioEmisor(notifRaw),
+          'nombrePersona': nombrePersona,
+          'cedula': cedula,
           'placa': (notifRaw['placa'] as String? ?? '').toUpperCase(),
+          'marca': marca,
+          'modelo': modelo,
+          'color': color,
+          'tipoVehiculo': tipoVehiculo,
           'tipoMulta': tipoMulta,
           'valor': valorMulta,
           'fechaEmision': fechaStr,
@@ -425,7 +596,7 @@ class NotificacionService {
     });
 
     // Guardar todo el mes en caché
-    await CacheDetallesService.guardarMes(result);
+    await CacheDetallesService.guardarMes(result, scope: cacheScope);
 
     // Retornar todos los registros del mes
     return result;

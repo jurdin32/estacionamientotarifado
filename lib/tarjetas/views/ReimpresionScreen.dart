@@ -1,8 +1,14 @@
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:estacionamientotarifado/core/colores.dart';
 import 'package:estacionamientotarifado/servicios/gestorImpresora.dart';
+import 'package:estacionamientotarifado/servicios/httpMonitorizado.dart';
 import 'package:estacionamientotarifado/servicios/servicioNotificaciones2.dart';
 import 'package:estacionamientotarifado/servicios/servicioTiposMultas.dart';
+import 'package:estacionamientotarifado/shared/widgets/campo_busqueda_app.dart';
+import 'package:estacionamientotarifado/shared/widgets/estado_carga_app.dart';
+import 'package:estacionamientotarifado/shared/widgets/tarjeta_lista_app.dart';
 import 'package:estacionamientotarifado/tarjetas/models/Multa.dart';
 import 'package:estacionamientotarifado/tarjetas/views/WidgetsImpresora.dart';
 import 'package:flutter/material.dart';
@@ -33,6 +39,8 @@ class _ReimpresionScreenState extends State<ReimpresionScreen> {
   String? _error;
   String _operador = '';
   int _usuarioId = 0;
+  bool _esSuperuser = false;
+  final Map<int, String> _usuariosPorId = {};
   List<Multa> _multasCache = [];
 
   // Filtro de búsqueda
@@ -51,7 +59,16 @@ class _ReimpresionScreenState extends State<ReimpresionScreen> {
       lista = _items.where((item) {
         return (item['placa'] as String).toLowerCase().contains(q) ||
             (item['tipoMulta'] as String).toLowerCase().contains(q) ||
-            (item['comprobante'] as String).toLowerCase().contains(q);
+            (item['comprobante'] as String).toLowerCase().contains(q) ||
+            (item['nombrePersona'] ?? '').toString().toLowerCase().contains(
+              q,
+            ) ||
+            (item['cedula'] ?? '').toString().toLowerCase().contains(q) ||
+            (item['usuarioEmisor'] ?? '').toString().toLowerCase().contains(
+              q,
+            ) ||
+            (item['marca'] ?? '').toString().toLowerCase().contains(q) ||
+            (item['modelo'] ?? '').toString().toLowerCase().contains(q);
       }).toList();
     }
     lista.sort((a, b) {
@@ -76,9 +93,11 @@ class _ReimpresionScreenState extends State<ReimpresionScreen> {
   Future<void> _inicializar() async {
     final prefs = await SharedPreferences.getInstance();
     _usuarioId = prefs.getInt('id') ?? 0;
+    _esSuperuser = prefs.getBool('is_superuser') == true;
     _operador =
         (prefs.getString('name') ?? prefs.getString('username') ?? 'OPERADOR')
             .toUpperCase();
+    await _cargarEtiquetasUsuarios(prefs);
     _multasCache = await obtenerMultasGuardadas();
     if (_multasCache.isEmpty) {
       try {
@@ -86,6 +105,63 @@ class _ReimpresionScreenState extends State<ReimpresionScreen> {
       } catch (_) {}
     }
     await _cargar();
+  }
+
+  Future<void> _cargarEtiquetasUsuarios(SharedPreferences prefs) async {
+    if (!_esSuperuser) return;
+
+    void insertarUsuario(Map<String, dynamic> item) {
+      final id = item['id'] as int? ?? 0;
+      if (id <= 0) return;
+      final username = (item['username'] as String? ?? '').trim();
+      final first = (item['first_name'] as String? ?? '').trim();
+      final last = (item['last_name'] as String? ?? '').trim();
+      final full = '$first $last'.trim();
+      final nombre = full.isNotEmpty ? full : username;
+      if (nombre.isNotEmpty) _usuariosPorId[id] = nombre;
+    }
+
+    final rawCache = prefs.getString('cache_admin_usuarios');
+    if (rawCache != null && rawCache.isNotEmpty) {
+      try {
+        final decoded = json.decode(rawCache);
+        if (decoded is List) {
+          for (final item in decoded) {
+            if (item is Map<String, dynamic>) insertarUsuario(item);
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (_usuariosPorId.isNotEmpty) return;
+
+    try {
+      final token = (prefs.getString('token') ?? '').trim();
+      final uri = token.isNotEmpty
+          ? Uri.parse(
+              'https://simert.transitoelguabo.gob.ec/api/gestion-usuarios/',
+            ).replace(queryParameters: {'_tk': token})
+          : Uri.parse(
+              'https://simert.transitoelguabo.gob.ec/api/gestion-usuarios/',
+            );
+
+      final response = await HttpMonitorizado.get(
+        uri,
+        headers: {
+          'Accept': 'application/json',
+          if (token.isNotEmpty) 'Authorization': 'Token $token',
+        },
+      ).timeout(const Duration(seconds: 15));
+
+      if (response.statusCode == 200) {
+        final decoded = json.decode(response.body);
+        if (decoded is List) {
+          for (final item in decoded) {
+            if (item is Map<String, dynamic>) insertarUsuario(item);
+          }
+        }
+      }
+    } catch (_) {}
   }
 
   @override
@@ -104,6 +180,7 @@ class _ReimpresionScreenState extends State<ReimpresionScreen> {
         _usuarioId,
         _multasCache,
         forceRefresh: forceRefresh,
+        verTodasUsuarios: _esSuperuser,
       );
       if (mounted) {
         setState(() {
@@ -126,6 +203,7 @@ class _ReimpresionScreenState extends State<ReimpresionScreen> {
     final idDetalle = item['idDetalle'] as int;
     final messenger = ScaffoldMessenger.of(context);
     setState(() => _procesandoId = idDetalle);
+    final operadorMulta = _resolverOperadorItem(item);
 
     String resultado;
     if (_gestorImpresora.estaConectada) {
@@ -137,7 +215,7 @@ class _ReimpresionScreenState extends State<ReimpresionScreen> {
         ubicacion: item['ubicacion'] as String,
         numeroComprobante: item['comprobante'] as String,
         observacion: item['observacion'] as String,
-        usuario: _operador,
+        usuario: operadorMulta,
         idNotificacion: item['idNotificacion'] as int,
       );
       resultado = ok
@@ -163,7 +241,7 @@ class _ReimpresionScreenState extends State<ReimpresionScreen> {
               ubicacion: item['ubicacion'] as String,
               numeroComprobante: item['comprobante'] as String,
               observacion: item['observacion'] as String,
-              usuario: _operador,
+              usuario: operadorMulta,
               idNotificacion: item['idNotificacion'] as int,
             );
             resultado = ok
@@ -229,14 +307,22 @@ class _ReimpresionScreenState extends State<ReimpresionScreen> {
   Future<String?> _guardarComoPdf(Map<String, dynamic> item) async {
     try {
       final doc = pw.Document();
+      final operadorMulta = _resolverOperadorItem(item);
       final placa = item['placa'] as String;
       final tipoMulta = item['tipoMulta'] as String;
       final valor = (item['valor'] as num).toDouble();
       final fecha = item['fechaEmision'] as String;
+      final fechaFormateada = _formatearFechaHora(fecha);
       final ubicacion = item['ubicacion'] as String;
       final comprobante = item['comprobante'] as String;
       final observacion = item['observacion'] as String;
       final idNotificacion = item['idNotificacion'] as int;
+      final nombrePersona = (item['nombrePersona'] ?? '').toString().trim();
+      final cedula = (item['cedula'] ?? '').toString().trim();
+      final marca = (item['marca'] ?? '').toString().trim();
+      final modelo = (item['modelo'] ?? '').toString().trim();
+      final color = (item['color'] ?? '').toString().trim();
+      final tipoVehiculo = (item['tipoVehiculo'] ?? '').toString().trim();
 
       doc.addPage(
         pw.Page(
@@ -280,15 +366,22 @@ class _ReimpresionScreenState extends State<ReimpresionScreen> {
               pw.Divider(),
               pw.SizedBox(height: 8),
               _pdfFila('Placa:', placa),
+              if (nombrePersona.isNotEmpty) _pdfFila('Persona:', nombrePersona),
+              if (cedula.isNotEmpty) _pdfFila('Cédula:', cedula),
+              if (marca.isNotEmpty) _pdfFila('Marca:', marca),
+              if (modelo.isNotEmpty) _pdfFila('Modelo:', modelo),
+              if (color.isNotEmpty) _pdfFila('Color:', color),
+              if (tipoVehiculo.isNotEmpty)
+                _pdfFila('Tipo vehículo:', tipoVehiculo),
               _pdfFila('Tipo de Infracción:', tipoMulta),
               _pdfFila('Valor:', '\$${valor.toStringAsFixed(2)}'),
-              _pdfFila('Fecha / Hora:', fecha),
+              _pdfFila('Fecha / Hora:', fechaFormateada),
               _pdfFila('Ubicación:', ubicacion),
               if (observacion.isNotEmpty) _pdfFila('Observación:', observacion),
               pw.SizedBox(height: 8),
               pw.Divider(),
               pw.SizedBox(height: 8),
-              _pdfFila('Operador:', _operador),
+              _pdfFila('Operador:', operadorMulta),
             ],
           ),
         ),
@@ -355,10 +448,24 @@ class _ReimpresionScreenState extends State<ReimpresionScreen> {
     );
   }
 
+  String _resolverOperadorItem(Map<String, dynamic> item) {
+    final emisor = (item['usuarioEmisor'] ?? '').toString().trim();
+    if (emisor.isNotEmpty && emisor.toLowerCase() != 'null') return emisor;
+
+    final usuarioId = int.tryParse((item['usuarioId'] ?? '').toString()) ?? 0;
+    if (usuarioId > 0) {
+      final nombre = _usuariosPorId[usuarioId]?.trim() ?? '';
+      if (nombre.isNotEmpty) return nombre;
+      return 'USUARIO #$usuarioId';
+    }
+
+    return _operador;
+  }
+
   // ─── Helpers ─────────────────────────────────────────────────────────────
   String _formatearFechaHora(String fechaStr) {
     try {
-      final dt = DateTime.parse(fechaStr);
+      final dt = DateTime.parse(fechaStr).toLocal();
       final dia = dt.day.toString().padLeft(2, '0');
       final mes = dt.month.toString().padLeft(2, '0');
       final hora = dt.hour.toString().padLeft(2, '0');
@@ -382,11 +489,7 @@ class _ReimpresionScreenState extends State<ReimpresionScreen> {
               width: double.infinity,
               padding: const EdgeInsets.all(20),
               decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFF0A1628), Color(0xFF000000)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
+                gradient: AppColores.gradientePrincipal,
               ),
               child: const Row(
                 children: [
@@ -469,15 +572,11 @@ class _ReimpresionScreenState extends State<ReimpresionScreen> {
       ],
       flexibleSpace: Container(
         decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFF0A1628), Color(0xFF000000)],
-          ),
+          gradient: AppColores.gradientePrincipal,
         ),
       ),
       bottom: PreferredSize(
-        preferredSize: const Size.fromHeight(48),
+        preferredSize: const Size.fromHeight(56),
         child: Container(
           color: Colors.white.withValues(alpha: 0.08),
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
@@ -485,12 +584,17 @@ class _ReimpresionScreenState extends State<ReimpresionScreen> {
             children: [
               const Icon(Icons.calendar_month, color: Colors.white70, size: 18),
               const SizedBox(width: 8),
-              Text(
-                'Este mes - ${_itemsFiltrados.length} multa${_itemsFiltrados.length == 1 ? '' : 's'}${_textoBusqueda.isNotEmpty ? ' (filtrado)' : ''}',
-
-                style: const TextStyle(color: Colors.white70, fontSize: 13),
+              Expanded(
+                child: Text(
+                  'Este mes - ${_itemsFiltrados.length} multa${_itemsFiltrados.length == 1 ? '' : 's'}${_textoBusqueda.isNotEmpty ? ' (filtrado)' : ''}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white70, fontSize: 13),
+                ),
               ),
-              const Spacer(),
+              const SizedBox(width: 8),
+              _buildScopeBadge(),
+              const SizedBox(width: 8),
               _buildEstadoImpresora(),
             ],
           ),
@@ -542,6 +646,32 @@ class _ReimpresionScreenState extends State<ReimpresionScreen> {
     );
   }
 
+  Widget _buildScopeBadge() {
+    final esAdmin = _esSuperuser;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: esAdmin
+            ? AppColores.acentoAdmin.withValues(alpha: 0.22)
+            : Colors.white.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: esAdmin
+              ? AppColores.acentoAdmin.withValues(alpha: 0.55)
+              : Colors.white30,
+        ),
+      ),
+      child: Text(
+        esAdmin ? 'Vista global (ADMIN)' : 'Mis multas',
+        style: TextStyle(
+          color: esAdmin ? AppColores.acentoAdmin : Colors.white70,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
   Widget _buildBody() {
     if (_cargando) return _buildCargando();
     if (_error != null) return _buildError();
@@ -568,89 +698,90 @@ class _ReimpresionScreenState extends State<ReimpresionScreen> {
   Widget _buildBarraBusqueda() {
     return Container(
       color: Colors.white,
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-      child: TextField(
-        controller: _busquedaCtrl,
-        onChanged: (v) => setState(() => _textoBusqueda = v.trim()),
-        textInputAction: TextInputAction.search,
-        decoration: InputDecoration(
-          hintText: 'Buscar por placa, tipo...',
-          hintStyle: const TextStyle(fontSize: 13),
-          prefixIcon: const Icon(Icons.search, color: _colorPrimario, size: 20),
-          suffixIcon: _textoBusqueda.isNotEmpty
-              ? IconButton(
-                  icon: const Icon(Icons.clear, size: 18),
-                  onPressed: () {
-                    _busquedaCtrl.clear();
-                    setState(() => _textoBusqueda = '');
-                  },
-                )
-              : null,
-          filled: true,
-          fillColor: _colorFondo,
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide.none,
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          CampoBusquedaApp(
+            controller: _busquedaCtrl,
+            hintText: 'Buscar por placa, tipo...',
+            filledColor: _colorFondo,
+            onChanged: (v) => setState(() => _textoBusqueda = v.trim()),
+            onSearch: () {
+              FocusScope.of(context).unfocus();
+              setState(() => _textoBusqueda = _busquedaCtrl.text.trim());
+            },
+            onClear: () => setState(() => _textoBusqueda = ''),
           ),
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 0,
+          const SizedBox(height: 8),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _legendItem(
+                  'Grave/Prohibida',
+                  _colorPorTipoInfraccion('prohibido grave'),
+                ),
+                const SizedBox(width: 8),
+                _legendItem(
+                  'Ausencia/Sin tarjeta',
+                  _colorPorTipoInfraccion('ausencia de tarjeta'),
+                ),
+                const SizedBox(width: 8),
+                _legendItem(
+                  'Tiempo/Exceso',
+                  _colorPorTipoInfraccion('exceso de tiempo'),
+                ),
+                const SizedBox(width: 8),
+                _legendItem(
+                  'Otros tipos',
+                  _colorPorTipoInfraccion('otros tipos'),
+                ),
+              ],
+            ),
           ),
-        ),
+        ],
+      ),
+    );
+  }
+
+  Widget _legendItem(String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: color,
+            ),
+          ),
+        ],
       ),
     );
   }
 
   Widget _buildCargando() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(24),
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [_colorPrimario, Color(0xFF000000)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.receipt_long_rounded,
-              size: 40,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 20),
-          const Text(
-            'SIMERT',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: _colorPrimario,
-              letterSpacing: 1.2,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Cargando multas de hoy...',
-            style: TextStyle(fontSize: 13, color: Colors.grey[600]),
-          ),
-          const SizedBox(height: 20),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 48),
-            child: LinearProgressIndicator(
-              backgroundColor: Colors.grey.shade200,
-              valueColor: const AlwaysStoppedAnimation<Color>(
-                Color(0xFF1565C0),
-              ),
-              minHeight: 3,
-              borderRadius: BorderRadius.circular(4),
-            ),
-          ),
-        ],
-      ),
+    return const EstadoCargaApp(
+      icono: Icons.receipt_long_rounded,
+      mensaje: 'Cargando multas de hoy...',
+      colorInicio: _colorPrimario,
+      colorFin: Colors.black,
+      colorProgreso: Color(0xFF1565C0),
     );
   }
 
@@ -751,145 +882,223 @@ class _ReimpresionScreenState extends State<ReimpresionScreen> {
     final fechaHora = _formatearFechaHora(item['fechaEmision'] as String);
     final comprobante = item['comprobante'] as String;
     final ubicacion = item['ubicacion'] as String;
+    final nombrePersona = (item['nombrePersona'] ?? '').toString().trim();
+    final cedula = (item['cedula'] ?? '').toString().trim();
+    final marca = (item['marca'] ?? '').toString().trim();
+    final modelo = (item['modelo'] ?? '').toString().trim();
+    final color = (item['color'] ?? '').toString().trim();
+    final tipoVehiculo = (item['tipoVehiculo'] ?? '').toString().trim();
+    final usuarioNotifico = _resolverOperadorItem(item);
     final conectada = _gestorImpresora.estaConectada;
-    final inicial = placa.isNotEmpty ? placa[0].toUpperCase() : '?';
+    final colorAcento = _colorPorTipoInfraccion(tipoMulta);
+    final iconoVehiculo = _iconoPorFormatoPlaca(placa);
+    final vehiculoTexto = [
+      marca,
+      modelo,
+      color,
+    ].where((e) => e.isNotEmpty).join(' · ');
 
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: 5),
-      elevation: 2,
-      shadowColor: _colorPrimario.withValues(alpha: 0.2),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
-        side: BorderSide(
-          color: _colorPrimario.withValues(alpha: 0.2),
-          width: 1,
+    return TarjetaListaApp(
+      colorAcento: colorAcento,
+      onTap: procesando ? null : () => _accionReimprimir(item),
+      avatar: Container(
+        width: 42,
+        height: 42,
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.2),
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white.withValues(alpha: 0.6)),
+        ),
+        child: Center(
+          child: procesando
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+              : Icon(iconoVehiculo, color: Colors.white, size: 20),
         ),
       ),
-      color: Colors.white,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: procesando ? null : () => _accionReimprimir(item),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Row(
+      titulo: placa,
+      subtitulo: tipoMulta,
+      encabezadoDerecha: Icon(
+        conectada ? Icons.print_rounded : Icons.picture_as_pdf_rounded,
+        color: Colors.white,
+        size: 20,
+      ),
+      cuerpo: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            fechaHora,
+            style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
             children: [
-              CircleAvatar(
-                radius: 24,
-                backgroundColor: _colorPrimario.withValues(alpha: 0.10),
-                child: procesando
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: _colorPrimario,
-                        ),
-                      )
-                    : Text(
-                        inicial,
-                        style: const TextStyle(
-                          color: _colorPrimario,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                      ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      placa,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                        color: _colorPrimario,
-                      ),
-                    ),
-                    Text(
-                      tipoMulta,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                    Text(
-                      fechaHora,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.grey.shade500,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            color: _colorPrimario.withValues(alpha: 0.09),
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(
-                              color: _colorPrimario.withValues(alpha: 0.3),
-                            ),
-                          ),
-                          child: Text(
-                            '\$${valor.toStringAsFixed(2)}',
-                            style: const TextStyle(
-                              color: _colorPrimario,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 10,
-                            ),
-                          ),
-                        ),
-                        if (comprobante.isNotEmpty) ...[
-                          const SizedBox(width: 6),
-                          Text(
-                            'N° $comprobante',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: Colors.grey.shade500,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                    if (ubicacion.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        ubicacion,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.grey.shade500,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ],
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: colorAcento.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: colorAcento.withValues(alpha: 0.35),
+                  ),
+                ),
+                child: Text(
+                  '\$${valor.toStringAsFixed(2)}',
+                  style: TextStyle(
+                    color: colorAcento,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 10,
+                  ),
                 ),
               ),
-              const SizedBox(width: 8),
-              Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    conectada
-                        ? Icons.print_rounded
-                        : Icons.picture_as_pdf_rounded,
-                    color: procesando ? Colors.grey : _colorPrimario,
-                    size: 22,
+              if (comprobante.isNotEmpty)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
                   ),
-                ],
-              ),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    'N° $comprobante',
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      color: Colors.grey.shade700,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
             ],
           ),
-        ),
+          if (ubicacion.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              ubicacion,
+              style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+          if (nombrePersona.isNotEmpty || cedula.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Icon(
+                  Icons.person_outline,
+                  size: 13,
+                  color: Colors.grey.shade600,
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    nombrePersona.isNotEmpty
+                        ? (cedula.isNotEmpty
+                              ? '$nombrePersona · CI $cedula'
+                              : nombrePersona)
+                        : 'CI $cedula',
+                    style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ],
+          if (usuarioNotifico.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Icon(
+                  Icons.badge_outlined,
+                  size: 13,
+                  color: Colors.grey.shade600,
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    'Notificó: $usuarioNotifico',
+                    style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ],
+          if (vehiculoTexto.isNotEmpty || tipoVehiculo.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Icon(
+                  Icons.directions_car_outlined,
+                  size: 13,
+                  color: Colors.grey.shade600,
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    vehiculoTexto.isNotEmpty
+                        ? (tipoVehiculo.isNotEmpty
+                              ? '$vehiculoTexto · $tipoVehiculo'
+                              : vehiculoTexto)
+                        : tipoVehiculo,
+                    style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
       ),
     );
+  }
+
+  Color _colorPorTipoInfraccion(String tipoMulta) {
+    final t = tipoMulta.toLowerCase();
+
+    if (t.contains('prohibid') ||
+        t.contains('discapac') ||
+        t.contains('peatonal') ||
+        t.contains('grave') ||
+        t.contains('peligro')) {
+      return AppColores.error;
+    }
+
+    if (t.contains('ausencia') ||
+        t.contains('sin tarjeta') ||
+        t.contains('caducad') ||
+        t.contains('vencid')) {
+      return const Color(0xFFAD7A00);
+    }
+
+    if (t.contains('fuera') || t.contains('tiempo') || t.contains('exceso')) {
+      return AppColores.info;
+    }
+
+    return const Color(0xFF1565C0);
+  }
+
+  IconData _iconoPorFormatoPlaca(String placa) {
+    final p = placa.trim().toUpperCase();
+    if (RegExp(r'^[A-Z]{2}\d{3}[A-Z]$').hasMatch(p)) {
+      return Icons.two_wheeler_rounded;
+    }
+    if (RegExp(r'^[A-Z]{3}\d{4}$').hasMatch(p)) {
+      return Icons.directions_car_filled_rounded;
+    }
+    return Icons.directions_car_outlined;
   }
 }
 

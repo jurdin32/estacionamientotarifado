@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:estacionamientotarifado/core/colores.dart';
 import 'package:estacionamientotarifado/servicios/monitorDatos.dart';
 import 'package:estacionamientotarifado/servicios/servicioWebSocket.dart';
 import 'package:flutter/material.dart';
@@ -13,9 +14,8 @@ class MonitorDatosScreen extends StatefulWidget {
 
 class _MonitorDatosScreenState extends State<MonitorDatosScreen>
     with SingleTickerProviderStateMixin {
-  static const Color _primary = Color(0xFF0A1628);
-  static const Color _accent = Color(0xFF1565C0);
-  static const Color _fondo = Color(0xFFF0F4FF);
+  static const Color _primary = AppColores.primario;
+  static const Color _accent = AppColores.acentoAdmin;
 
   final MonitorDatos _monitor = MonitorDatos.instancia;
   late TabController _tabController;
@@ -50,11 +50,7 @@ class _MonitorDatosScreenState extends State<MonitorDatosScreen>
               width: double.infinity,
               padding: const EdgeInsets.all(20),
               decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFF0A1628), Color(0xFF000000)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
+                gradient: AppColores.gradientePrincipal,
               ),
               child: const Row(
                 children: [
@@ -116,11 +112,7 @@ class _MonitorDatosScreenState extends State<MonitorDatosScreen>
         elevation: 0,
         flexibleSpace: Container(
           decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              colors: [Color(0xFF0A1628), Color(0xFF000000)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
+            gradient: AppColores.gradientePrincipal,
           ),
         ),
         actions: [

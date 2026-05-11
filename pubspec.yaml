@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+10
+version: 1.0.3+15
 
 environment:
   sdk: ^3.8.1
@@ -30,6 +30,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_localizations:
+    sdk: flutter
   google_fonts: ^6.1.0
 
 
@@ -41,6 +43,7 @@ dependencies:
   intl: ^0.20.2
   flutter_launcher_icons: ^0.14.4
   onesignal_flutter: ^5.3.4
+  package_info_plus: ^8.1.3
   dropdown_search: ^6.0.2
   image_picker: ^1.2.0
   http_parser: ^4.1.2
@@ -53,6 +56,8 @@ dependencies:
   url_launcher: ^6.3.1
   path_provider: ^2.1.4
   pdf: ^3.10.8
+  flutter_local_notifications: ^17.2.3
+  workmanager: ^0.9.0
   # Replaced by blue_thermal_printer for Bluetooth SPP/ESC-POS functionality
   # flutter_bluetooth_serial: ^0.4.0
 
@@ -108,7 +113,7 @@ flutter:
   #   - family: Trajan Pro
   #     fonts:
   #       - asset: fonts/TrajanPro.ttf
-  #       - asset: fonts/TrajanPro_Bold.ttf
+  #       - asset: traps/TrajanPro_Bold.ttf
   #         weight: 700
   #
   # For details regarding fonts from package dependencies,

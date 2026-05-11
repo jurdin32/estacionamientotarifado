@@ -1,3 +1,4 @@
+import 'package:estacionamientotarifado/core/colores.dart';
 import 'package:flutter/material.dart';
 
 class ManualUsuarioScreen extends StatefulWidget {
@@ -11,14 +12,14 @@ class _ManualUsuarioScreenState extends State<ManualUsuarioScreen> {
   final ScrollController _scrollController = ScrollController();
   int _seccionActiva = 0;
 
-  static const _azulPrimario = Color(0xFF1565C0);
-  static const _azulOscuro = Color(0xFF0A1628);
+  static const _azulPrimario = AppColores.acentoAdmin;
+  static const _azulOscuro = AppColores.primario;
 
   final List<_SeccionManual> _secciones = [
     _SeccionManual(
       titulo: 'Inicio de Sesión',
       icono: Icons.login,
-      colorIlustracion: const Color(0xFF1565C0),
+      colorIlustracion: AppColores.acentoAdmin,
       elementosIlustracion: const [
         _ElementoIlustracion(icono: Icons.person_outline, etiqueta: 'Usuario'),
         _ElementoIlustracion(icono: Icons.lock_outline, etiqueta: 'Contraseña'),
@@ -378,15 +379,20 @@ class _ManualUsuarioScreenState extends State<ManualUsuarioScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF0F4FF),
+      backgroundColor: AppColores.acentoFondo,
       appBar: AppBar(
         title: const Text(
           'Manual de Usuario',
           style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
         ),
-        backgroundColor: _azulOscuro,
+        foregroundColor: Colors.white,
         iconTheme: const IconThemeData(color: Colors.white),
         elevation: 0,
+        flexibleSpace: Container(
+          decoration: const BoxDecoration(
+            gradient: AppColores.gradientePrincipal,
+          ),
+        ),
       ),
       body: Column(
         children: [
@@ -431,7 +437,7 @@ class _ManualUsuarioScreenState extends State<ManualUsuarioScreen> {
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFF0F4FF),
+                      color: AppColores.acentoFondo,
                       borderRadius: BorderRadius.circular(10),
                       border: Border.all(
                         color: _azulPrimario.withValues(alpha: 0.3),
@@ -527,11 +533,7 @@ class _ManualUsuarioScreenState extends State<ManualUsuarioScreen> {
                 Container(
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [_azulOscuro, Color(0xFF1A2A4A)],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
+                    gradient: AppColores.gradientePrincipal,
                     borderRadius: BorderRadius.circular(16),
                   ),
                   child: Row(
@@ -799,7 +801,7 @@ class _SeccionManual {
     required this.titulo,
     required this.icono,
     required this.pasos,
-    this.colorIlustracion = const Color(0xFF1565C0),
+    this.colorIlustracion = AppColores.acentoAdmin,
     this.elementosIlustracion = const [],
   });
 }

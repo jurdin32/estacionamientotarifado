@@ -1,3 +1,8 @@
+import 'package:estacionamientotarifado/core/colores.dart';
+import 'package:estacionamientotarifado/shared/widgets/campo_busqueda_app.dart';
+import 'package:estacionamientotarifado/shared/widgets/encabezado_modulo_app.dart';
+import 'package:estacionamientotarifado/shared/widgets/estado_carga_app.dart';
+import 'package:estacionamientotarifado/shared/widgets/tarjeta_lista_app.dart';
 import 'package:estacionamientotarifado/servicios/servicioPermisos.dart';
 import 'package:flutter/material.dart';
 import 'package:estacionamientotarifado/servicios/httpMonitorizado.dart';
@@ -65,10 +70,10 @@ class AdminUsuariosScreen extends StatefulWidget {
 }
 
 class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
-  static const Color _colorPrimario = Color(0xFF0A1628);
-  static const Color _colorSecundario = Color(0xFF1565C0);
-  static const Color _colorFondo = Color(0xFFF0F4FF);
-  static const Color _colorSubtexto = Color(0xFF555555);
+  static const Color _colorPrimario = AppColores.primario;
+  static const Color _colorSecundario = AppColores.acentoAdmin;
+  static const Color _colorFondo = AppColores.acentoFondo;
+  static const Color _colorSubtexto = AppColores.textoSecundario;
 
   final TextEditingController _searchCtrl = TextEditingController();
 
@@ -87,6 +92,9 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
   final Map<int, bool> _activosCache = {};
   // IDs que están siendo actualizados
   final Set<int> _toggling = {};
+  // Sincronización diferida de permisos para evitar lag al alternar switches.
+  final Map<int, Timer> _permisosDebounce = {};
+  final Set<int> _syncPermisos = {};
 
   // ID del usuario actualmente logueado
   int _miId = 0;
@@ -104,6 +112,10 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
   void dispose() {
     _searchCtrl.removeListener(_filtrar);
     _searchCtrl.dispose();
+    for (final timer in _permisosDebounce.values) {
+      timer.cancel();
+    }
+    _permisosDebounce.clear();
     super.dispose();
   }
 
@@ -1268,14 +1280,24 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
     });
   }
 
-  Future<void> _guardarPermiso(int userId, String key, bool value) async {
-    final permisos =
-        _permisosCache[userId] ?? PermissionsService.defaultPermisos();
-    permisos[key] = value;
-    _permisosCache[userId] = permisos;
+  void _programarSyncPermisos(int userId, {bool inmediato = false}) {
+    _permisosDebounce[userId]?.cancel();
+    if (inmediato) {
+      unawaited(_sincronizarPermisos(userId));
+      return;
+    }
+    _permisosDebounce[userId] = Timer(const Duration(milliseconds: 450), () {
+      unawaited(_sincronizarPermisos(userId));
+    });
+  }
 
-    // Usar los mismos headers/URI que el resto de llamadas del screen
-    // (incluye Cookie de sesión) en lugar de PermissionsService que no la lleva.
+  Future<void> _sincronizarPermisos(int userId) async {
+    final permisos = _permisosCache[userId];
+    if (permisos == null || _syncPermisos.contains(userId)) return;
+
+    _syncPermisos.add(userId);
+    if (mounted) setState(() {});
+
     try {
       final uri = _uriConToken('/api/permisos-usuario/$userId/');
       final response = await HttpMonitorizado.patch(
@@ -1301,10 +1323,20 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
       }
     } catch (e) {
       debugPrint('[Permisos] Error PATCH permiso: $e');
+    } finally {
+      _syncPermisos.remove(userId);
+      if (mounted) setState(() {});
     }
+  }
 
-    // Actualizar caché local independientemente
+  Future<void> _guardarPermiso(int userId, String key, bool value) async {
+    final permisos =
+        _permisosCache[userId] ?? PermissionsService.defaultPermisos();
+    permisos[key] = value;
+    _permisosCache[userId] = permisos;
+
     await PermissionsService.guardarCacheLocal(userId, permisos);
+    _programarSyncPermisos(userId);
     if (mounted) setState(() {});
   }
 
@@ -1313,20 +1345,8 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
     Map<String, bool> permisos,
   ) async {
     _permisosCache[userId] = permisos;
-    try {
-      final uri = _uriConToken('/api/permisos-usuario/$userId/');
-      final response = await HttpMonitorizado.patch(
-        uri,
-        headers: _buildHeaders(),
-        body: json.encode(permisos),
-      ).timeout(const Duration(seconds: 8));
-      debugPrint(
-        '[Permisos] PATCH masivo $userId status=${response.statusCode}',
-      );
-    } catch (e) {
-      debugPrint('[Permisos] Error PATCH masivo: $e');
-    }
     await PermissionsService.guardarCacheLocal(userId, permisos);
+    _programarSyncPermisos(userId, inmediato: true);
     if (mounted) setState(() {});
   }
 
@@ -1354,6 +1374,7 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
             builder: (_, scrollCtrl) {
               final isActivo = _activosCache[uid] ?? true;
               final isToggling = _toggling.contains(uid);
+              final syncingPermisos = _syncPermisos.contains(uid);
               return Container(
                 decoration: const BoxDecoration(
                   color: Colors.white,
@@ -1720,6 +1741,31 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
                               ],
                             ),
                             const SizedBox(height: 16),
+                            if (syncingPermisos)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: Row(
+                                  children: const [
+                                    SizedBox(
+                                      width: 14,
+                                      height: 14,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: _colorSecundario,
+                                      ),
+                                    ),
+                                    SizedBox(width: 8),
+                                    Text(
+                                      'Guardando cambios de permisos...',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: _colorSubtexto,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             const Divider(height: 1),
                             const SizedBox(height: 8),
                             // Switches por permiso
@@ -1905,53 +1951,11 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
   }
 
   Widget _buildCargando() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(24),
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [_colorPrimario, _colorSecundario],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.manage_accounts_rounded,
-              size: 40,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 20),
-          const Text(
-            'SIMERT',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: _colorPrimario,
-              letterSpacing: 1.2,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Cargando usuarios...',
-            style: TextStyle(fontSize: 13, color: Colors.grey[600]),
-          ),
-          const SizedBox(height: 20),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 48),
-            child: LinearProgressIndicator(
-              backgroundColor: Colors.grey.shade200,
-              valueColor: const AlwaysStoppedAnimation<Color>(_colorSecundario),
-              minHeight: 3,
-              borderRadius: BorderRadius.circular(4),
-            ),
-          ),
-        ],
-      ),
+    return const EstadoCargaApp(
+      icono: Icons.manage_accounts_rounded,
+      mensaje: 'Cargando usuarios...',
+      colorInicio: _colorPrimario,
+      colorFin: _colorSecundario,
     );
   }
 
@@ -2022,251 +2026,184 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
       activos = total;
     }
 
-    return Card(
+    final colorAcento = isActivo
+        ? (isSuperuser ? Colors.amber.shade700 : const Color(0xFF1565C0))
+        : Colors.red.shade600;
+
+    return TarjetaListaApp(
+      colorAcento: colorAcento,
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
-        side: BorderSide(
-          color: isActivo ? Colors.grey.shade200 : Colors.red.shade200,
-          width: isActivo ? 1 : 1.5,
+      onTap: () => _mostrarPermisos(usuario),
+      avatar: Container(
+        width: 42,
+        height: 42,
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.2),
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white.withValues(alpha: 0.6)),
+        ),
+        child: Center(
+          child: Text(
+            nombre.isNotEmpty ? nombre[0].toUpperCase() : 'U',
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w800,
+              fontSize: 16,
+            ),
+          ),
         ),
       ),
-      color: isActivo ? Colors.white : Colors.red.shade50,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: () => _mostrarPermisos(usuario),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Row(
-            children: [
-              // Avatar
-              Stack(
-                children: [
-                  CircleAvatar(
-                    radius: 24,
-                    backgroundColor: isActivo
-                        ? (isSuperuser
-                              ? Colors.amber.shade100
-                              : const Color(0xFF1565C0).withValues(alpha: 0.12))
-                        : Colors.grey.shade200,
-                    child: Text(
-                      nombre.isNotEmpty ? nombre[0].toUpperCase() : 'U',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 18,
-                        color: isActivo
-                            ? (isSuperuser
-                                  ? Colors.amber.shade700
-                                  : const Color(0xFF1565C0))
-                            : Colors.grey.shade400,
-                      ),
+      titulo: nombre,
+      subtitulo: '@$username',
+      encabezadoDerecha: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Text(
+          isSuperuser ? 'Admin' : (isActivo ? 'Activo' : 'Inactivo'),
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+            color: isSuperuser
+                ? Colors.amber.shade800
+                : isActivo
+                ? Colors.green.shade700
+                : Colors.red.shade700,
+          ),
+        ),
+      ),
+      cuerpo: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (email.isNotEmpty)
+                  Text(
+                    email,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      color: Colors.grey.shade600,
                     ),
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  if (!isActivo)
-                    Positioned(
-                      bottom: 0,
-                      right: 0,
-                      child: Container(
-                        width: 14,
-                        height: 14,
-                        decoration: BoxDecoration(
-                          color: Colors.red.shade600,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 1.5),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: isActivo
+                            ? Colors.green.shade50
+                            : Colors.red.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: isActivo
+                              ? Colors.green.shade300
+                              : Colors.red.shade300,
                         ),
-                        child: const Icon(
-                          Icons.block_rounded,
-                          size: 8,
-                          color: Colors.white,
+                      ),
+                      child: Text(
+                        isActivo ? 'Habilitado' : 'Deshabilitado',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          color: isActivo
+                              ? Colors.green.shade700
+                              : Colors.red.shade700,
                         ),
                       ),
                     ),
-                ],
-              ),
-              const SizedBox(width: 14),
-              // Datos
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            nombre,
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
-                              color: isActivo
-                                  ? const Color(0xFF0A1628)
-                                  : Colors.grey.shade500,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        if (isSuperuser)
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 7,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.amber.shade100,
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(
-                                color: Colors.amber.shade300,
-                                width: 1,
+                    if (!isSuperuser) ...[
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(4),
+                                child: LinearProgressIndicator(
+                                  value: total > 0 ? activos / total : 1,
+                                  backgroundColor: Colors.grey.shade200,
+                                  color: activos == total
+                                      ? Colors.green.shade600
+                                      : activos == 0
+                                      ? Colors.red.shade400
+                                      : const Color(0xFF1565C0),
+                                  minHeight: 5,
+                                ),
                               ),
                             ),
-                            child: Text(
-                              'Admin',
+                            const SizedBox(width: 6),
+                            Text(
+                              '$activos/$total',
                               style: TextStyle(
                                 fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.amber.shade800,
+                                color: Colors.grey.shade500,
                               ),
                             ),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      '@$username',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: isActivo ? _colorSubtexto : Colors.grey.shade400,
-                      ),
-                    ),
-                    if (email.isNotEmpty)
-                      Text(
-                        email,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.grey.shade500,
+                          ],
                         ),
-                        overflow: TextOverflow.ellipsis,
                       ),
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        // Badge estado activo
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 7,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: isActivo
-                                ? Colors.green.shade50
-                                : Colors.red.shade50,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                              color: isActivo
-                                  ? Colors.green.shade300
-                                  : Colors.red.shade300,
-                              width: 1,
-                            ),
-                          ),
-                          child: Text(
-                            isActivo ? 'Habilitado' : 'Deshabilitado',
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w600,
-                              color: isActivo
-                                  ? Colors.green.shade700
-                                  : Colors.red.shade700,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        // Barra de permisos
-                        if (!isSuperuser)
-                          Expanded(
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(4),
-                                    child: LinearProgressIndicator(
-                                      value: total > 0 ? activos / total : 1,
-                                      backgroundColor: Colors.grey.shade200,
-                                      color: activos == total
-                                          ? Colors.green.shade600
-                                          : activos == 0
-                                          ? Colors.red.shade400
-                                          : const Color(0xFF1565C0),
-                                      minHeight: 5,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 6),
-                                Text(
-                                  '$activos/$total',
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    color: Colors.grey.shade500,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                      ],
-                    ),
+                    ],
                   ],
                 ),
-              ),
-              const SizedBox(width: 8),
-              // Botón habilitar/deshabilitar
-              Column(
-                children: [
-                  isToggling
-                      ? const SizedBox(
-                          width: 22,
-                          height: 22,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: _colorSecundario,
-                          ),
-                        )
-                      : GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onTap: () => _toggleActivo(uid, nombre, isActivo),
-                          child: Container(
-                            padding: const EdgeInsets.all(6),
-                            decoration: BoxDecoration(
-                              color: isActivo
-                                  ? Colors.red.shade50
-                                  : Colors.green.shade50,
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(
-                                color: isActivo
-                                    ? Colors.red.shade200
-                                    : Colors.green.shade200,
-                              ),
-                            ),
-                            child: Icon(
-                              isActivo
-                                  ? Icons.block_rounded
-                                  : Icons.check_circle_rounded,
-                              size: 18,
-                              color: isActivo
-                                  ? Colors.red.shade600
-                                  : Colors.green.shade600,
-                            ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Column(
+            children: [
+              isToggling
+                  ? const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: _colorSecundario,
+                      ),
+                    )
+                  : GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => _toggleActivo(uid, nombre, isActivo),
+                      child: Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: isActivo
+                              ? Colors.red.shade50
+                              : Colors.green.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: isActivo
+                                ? Colors.red.shade200
+                                : Colors.green.shade200,
                           ),
                         ),
-                  const SizedBox(height: 6),
-                  const Icon(
-                    Icons.chevron_right_rounded,
-                    color: Colors.grey,
-                    size: 20,
-                  ),
-                ],
+                        child: Icon(
+                          isActivo
+                              ? Icons.block_rounded
+                              : Icons.check_circle_rounded,
+                          size: 18,
+                          color: isActivo
+                              ? Colors.red.shade600
+                              : Colors.green.shade600,
+                        ),
+                      ),
+                    ),
+              const SizedBox(height: 6),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: Colors.grey,
+                size: 20,
               ),
             ],
           ),
-        ),
+        ],
       ),
     );
   }
@@ -2284,11 +2221,7 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
               width: double.infinity,
               padding: const EdgeInsets.all(20),
               decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFF0A1628), Color(0xFF000000)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
+                gradient: AppColores.gradientePrincipal,
               ),
               child: const Row(
                 children: [
@@ -2350,11 +2283,7 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
         ),
         flexibleSpace: Container(
           decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              colors: [Color(0xFF0A1628), Color(0xFF000000)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
+            gradient: AppColores.gradientePrincipal,
           ),
         ),
         actions: [
@@ -2372,80 +2301,23 @@ class _AdminUsuariosScreenState extends State<AdminUsuariosScreen> {
       ),
       body: Column(
         children: [
-          // ── Banda SIMERT ────────────────────────────────────────────
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFF0A1628), Color(0xFF000000)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.2),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.admin_panel_settings_rounded,
-                    color: Colors.white,
-                    size: 22,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                const Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'SIMERT',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    Text(
-                      'Administración de Accesos',
-                      style: TextStyle(color: Colors.white70, fontSize: 12),
-                    ),
-                  ],
-                ),
-              ],
-            ),
+          const EncabezadoModuloApp(
+            icono: Icons.admin_panel_settings_rounded,
+            subtitulo: 'Administración de Accesos',
           ),
           // ── Buscador ──────────────────────────────────────────────────
           Padding(
-            padding: const EdgeInsets.all(16),
-            child: TextField(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+            child: CampoBusquedaApp(
               controller: _searchCtrl,
-              decoration: InputDecoration(
-                hintText: 'Buscar usuario…',
-                prefixIcon: const Icon(
-                  Icons.search_rounded,
-                  color: Color(0xFF0A1628),
-                ),
-                suffixIcon: _searchCtrl.text.isNotEmpty
-                    ? IconButton(
-                        icon: Icon(Icons.clear, color: Colors.grey[500]),
-                        onPressed: _searchCtrl.clear,
-                      )
-                    : null,
-                filled: true,
-                fillColor: Colors.grey.shade50,
-                contentPadding: const EdgeInsets.symmetric(
-                  vertical: 14,
-                  horizontal: 16,
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
-                ),
-              ),
+              hintText: 'Buscar usuario…',
+              filledColor: Colors.grey.shade50,
+              onSearch: () {
+                FocusScope.of(context).unfocus();
+                _filtrar();
+              },
+              onChanged: (_) => _filtrar(),
+              onClear: _filtrar,
             ),
           ),
 

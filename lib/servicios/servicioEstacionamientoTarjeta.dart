@@ -3,6 +3,20 @@ import 'package:flutter/foundation.dart';
 import 'package:estacionamientotarifado/tarjetas/models/Tarjetas.dart';
 import 'package:estacionamientotarifado/servicios/httpMonitorizado.dart';
 
+/// Error específico para conflicto de concurrencia (HTTP 409).
+/// Se lanza cuando el servidor detecta que la estación ya está ocupada
+/// por otro registro simultáneo.
+class ApiConflictException implements Exception {
+  final int estacionId;
+  final String body;
+
+  ApiConflictException(this.estacionId, this.body);
+
+  @override
+  String toString() =>
+      'ApiConflictException(estacionId: $estacionId, body: $body)';
+}
+
 const String _urlEstTarjeta =
     'https://simert.transitoelguabo.gob.ec/api/est_tarjeta/';
 
@@ -100,9 +114,47 @@ Future<Estacionamiento_Tarjeta> registarEstacionamientoTarjeta(
   );
   if (response.statusCode == 201 || response.statusCode == 200) {
     return Estacionamiento_Tarjeta.fromJson(json.decode(response.body));
+  } else if (response.statusCode == 409) {
+    // Conflicto: la estación ya está ocupada por otro registro simultáneo
+    throw ApiConflictException(est.estacionId, response.body);
   } else {
-    throw Exception(
-      'Error al crear el estacionamiento: ${json.decode(response.body)['non_field_errors'][0]}',
-    );
+    String mensajeError;
+    try {
+      final rawBody = response.body;
+      debugPrint('❌ Error servidor (${response.statusCode}): $rawBody');
+      final body = json.decode(rawBody);
+      if (body is Map) {
+        // Intentar extraer mensaje de error de diferentes formatos posibles
+        if (body['non_field_errors'] != null) {
+          final errors = body['non_field_errors'];
+          mensajeError = errors is List ? errors.join(', ') : errors.toString();
+        } else if (body['detail'] != null) {
+          mensajeError = body['detail'].toString();
+        } else if (body['placa'] != null) {
+          final errors = body['placa'];
+          mensajeError = errors is List ? errors.join(', ') : errors.toString();
+        } else if (body['estacion'] != null) {
+          final errors = body['estacion'];
+          mensajeError = errors is List ? errors.join(', ') : errors.toString();
+        } else if (body['usuario'] != null) {
+          final errors = body['usuario'];
+          mensajeError = errors is List ? errors.join(', ') : errors.toString();
+        } else {
+          // Tomar el primer valor de error disponible
+          final primerError = body.values.firstWhere(
+            (v) => v != null && v.toString().isNotEmpty,
+            orElse: () => 'Error desconocido',
+          );
+          mensajeError = primerError is List
+              ? primerError.join(', ')
+              : primerError.toString();
+        }
+      } else {
+        mensajeError = 'Error del servidor (${response.statusCode})';
+      }
+    } catch (_) {
+      mensajeError = 'Error del servidor (${response.statusCode})';
+    }
+    throw Exception('Error al crear el estacionamiento: $mensajeError');
   }
 }

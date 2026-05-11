@@ -1,11 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:ui';
+import 'package:estacionamientotarifado/core/colores.dart';
 import 'package:estacionamientotarifado/servicios/httpMonitorizado.dart';
 import 'package:estacionamientotarifado/consultas/consultar_multas.dart';
 import 'package:estacionamientotarifado/consultas/credencial.dart';
 import 'package:estacionamientotarifado/servicios/servicioNotificaciones2.dart'
     as svc2;
+import 'package:estacionamientotarifado/servicios/servicioNotificacionesBackground.dart';
 import 'package:estacionamientotarifado/servicios/servicioWebSocket.dart';
 import 'package:estacionamientotarifado/servicios/monitorDatos.dart';
 import 'package:estacionamientotarifado/consultas/monitor_datos_screen.dart';
@@ -20,8 +21,11 @@ import 'package:estacionamientotarifado/consultas/vehicle_screen.dart';
 import 'package:estacionamientotarifado/consultas/manual_usuario_screen.dart';
 import 'package:estacionamientotarifado/login_screan.dart';
 import 'package:estacionamientotarifado/servicios/servicioPermisos.dart';
+import 'package:estacionamientotarifado/shared/widgets/fondo_decorado_app.dart';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -37,7 +41,8 @@ class _HomeScreenState extends State<HomeScreen>
   String name = '';
   String email = '';
   String lastLogin = '';
-  int usuario_id = 0;
+  String _versionProyecto = '';
+  int usuarioId = 0;
   bool _isSuperuser = false;
   Map<String, bool> _permisos = PermissionsService.defaultPermisos();
 
@@ -50,8 +55,15 @@ class _HomeScreenState extends State<HomeScreen>
   int _placasUnicasMes = 0;
   bool _metricasCargadas = false;
 
+  /// Ranking de usuarios del mes: [(nombre, cantidad)]
+  List<Map<String, dynamic>> _rankingUsuarios = [];
+
+  /// Timer para guardar ranking en caché cada cierto tiempo
+  Timer? _rankingSaveTimer;
+
   StreamSubscription? _wsMultasSub;
   StreamSubscription? _wsTarjetasSub;
+  late AppLifecycleListener _lifecycleListener;
 
   late AnimationController _ctrl;
   late Animation<double> _fade;
@@ -59,7 +71,24 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void initState() {
     super.initState();
+
+    // Escuchar cambios en el ciclo de vida de la app
+    _lifecycleListener = AppLifecycleListener(
+      onResume: () {
+        debugPrint('🔄 App reanudada - sincronizando caché');
+        try {
+          unawaited(ServicioNotificacionesBackground.actualizarAhora());
+        } catch (e) {
+          debugPrint('⚠️ Error en actualizarAhora: $e');
+        }
+      },
+    );
+
+    _cargarVersionProyecto();
     _loadUserData();
+
+    // Recuperar ranking anterior (si existe) para mostrar inmediatamente
+    _recuperarRankingEnCache();
 
     _ctrl = AnimationController(
       vsync: this,
@@ -67,6 +96,21 @@ class _HomeScreenState extends State<HomeScreen>
     );
     _fade = CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut);
     _ctrl.forward();
+  }
+
+  Future<void> _cargarVersionProyecto() async {
+    try {
+      final packageInfo = await PackageInfo.fromPlatform();
+      if (!mounted) return;
+      setState(() {
+        _versionProyecto = 'v${packageInfo.version}+${packageInfo.buildNumber}';
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _versionProyecto = 'v1.0.0+10';
+      });
+    }
   }
 
   Future<void> _loadUserData() async {
@@ -79,7 +123,7 @@ class _HomeScreenState extends State<HomeScreen>
       username = prefs.getString('username') ?? '';
       name = prefs.getString('name') ?? '';
       email = prefs.getString('email') ?? '';
-      usuario_id = uid;
+      usuarioId = uid;
       lastLogin = _formatDate(prefs.getString('last_login') ?? '');
       _isSuperuser = superuser;
       _permisos = permisos;
@@ -110,7 +154,8 @@ class _HomeScreenState extends State<HomeScreen>
     return _permisos[key] ?? true;
   }
 
-  /// Carga métricas con patrón cache-first → HTTP paralelo como fallback.
+  /// Carga métricas con patrón cache-first → HTTP siempre como actualización.
+  /// La caché se muestra al instante, luego HTTP refresca los datos en segundo plano.
   Future<void> _cargarMetricas(SharedPreferences prefs, String token) async {
     final now = DateTime.now();
 
@@ -149,17 +194,27 @@ class _HomeScreenState extends State<HomeScreen>
       _aplicarMultas(multas, now);
       _aplicarTarjetas(tarjetas, now);
 
-      // ═══ FASE 2: HTTP en paralelo solo si la caché está vacía ════════
-      final faltaM = multas.isEmpty && token.isNotEmpty;
-      final faltaT = tarjetas.isEmpty && token.isNotEmpty;
+      // ═══ FASE 2: HTTP siempre (refresca datos aunque haya caché) ═════
+      if (token.isNotEmpty) {
+        final resultados =
+            await Future.wait([
+              _fetchMultasHttp(uriTk, prefs),
+              _fetchTarjetasHttp(uriTk, prefs),
+            ]).timeout(
+              const Duration(seconds: 15),
+              onTimeout: () => [multas, tarjetas],
+            );
 
-      if (faltaM || faltaT) {
-        final resultados = await Future.wait([
-          faltaM ? _fetchMultasHttp(uriTk, prefs) : Future.value(multas),
-          faltaT ? _fetchTarjetasHttp(uriTk, prefs) : Future.value(tarjetas),
-        ]);
-        if (faltaM) _aplicarMultas(resultados[0], now);
-        if (faltaT) _aplicarTarjetas(resultados[1], now);
+        final multasHttp = resultados[0] as List<Map<String, dynamic>>;
+        final tarjetasHttp = resultados[1] as List<Map<String, dynamic>>;
+
+        // Solo actualizar si HTTP devolvió datos (si falló, mantener caché)
+        if (multasHttp.isNotEmpty) {
+          _aplicarMultas(multasHttp, now);
+        }
+        if (tarjetasHttp.isNotEmpty) {
+          _aplicarTarjetas(tarjetasHttp, now);
+        }
       }
     } catch (_) {
       if (mounted) setState(() => _metricasCargadas = true);
@@ -198,7 +253,7 @@ class _HomeScreenState extends State<HomeScreen>
   void _aplicarTarjetas(List<Map<String, dynamic>> tarjetas, DateTime now) {
     final tarjetasUsuario = _isSuperuser
         ? tarjetas
-        : tarjetas.where((t) => (t['usuario'] as int?) == usuario_id).toList();
+        : tarjetas.where((t) => (t['usuario'] as int?) == usuarioId).toList();
 
     final tarjetasMes = tarjetasUsuario.where((t) {
       try {
@@ -230,6 +285,9 @@ class _HomeScreenState extends State<HomeScreen>
         _metricasCargadas = true;
       });
     }
+
+    // Calcular ranking asincronicamente
+    unawaited(_recalcularRankingHoy(tarjetas, now));
   }
 
   // ── Fetch HTTP (fallback cuando caché vacía) ─────────────────────────────
@@ -320,13 +378,45 @@ class _HomeScreenState extends State<HomeScreen>
       if (!mounted) return;
       final now = DateTime.now();
       if (evento.accion == 'snapshot' && evento.datos is List) {
-        final tarjetas = (evento.datos as List)
+        final tarjetasWs = (evento.datos as List)
             .whereType<Map<String, dynamic>>()
             .toList();
-        SharedPreferences.getInstance().then(
-          (p) => p.setString('estacionamientos_tarjeta', json.encode(tarjetas)),
-        );
-        _aplicarTarjetas(tarjetas, now);
+
+        // Hacer MERGE con los datos existentes en caché: el snapshot del WS
+        // solo trae registros activos (estacionId > 0), pero necesitamos
+        // mantener los registros históricos del mes para las métricas.
+        SharedPreferences.getInstance().then((p) async {
+          final existentes = p.getString('estacionamientos_tarjeta');
+          List<Map<String, dynamic>> merge = [];
+          if (existentes != null) {
+            try {
+              merge = (json.decode(existentes) as List)
+                  .whereType<Map<String, dynamic>>()
+                  .toList();
+            } catch (_) {}
+          }
+          // Agregar/actualizar registros del WS
+          for (final t in tarjetasWs) {
+            final estacionId = t['estacion'] as int?;
+            if (estacionId != null && estacionId > 0) {
+              final idx = merge.indexWhere(
+                (e) => (e['estacion'] as int?) == estacionId,
+              );
+              if (idx == -1) {
+                merge.add(t);
+              } else {
+                merge[idx] = t;
+              }
+            }
+          }
+          // Guardar merge en caché
+          await p.setString('estacionamientos_tarjeta', json.encode(merge));
+        });
+
+        // Aplicar métricas con los datos del WS (activos) + merge con existentes
+        _aplicarTarjetas(tarjetasWs, now);
+        // Recalcular ranking cuando llega snapshot
+        unawaited(_recalcularRankingHoy(tarjetasWs, now));
       } else if (evento.accion == 'create' && evento.datos is Map) {
         _onNuevaTarjetaWs(evento.datos as Map<String, dynamic>);
       }
@@ -347,16 +437,49 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _onNuevaTarjetaWs(Map<String, dynamic> t) {
-    final userId = t['usuario'] as int?;
-    if (!_isSuperuser && userId != usuario_id) return;
     try {
       final dt = DateTime.parse(t['fecha'] as String);
       final now = DateTime.now();
       if (dt.year == now.year && dt.month == now.month && mounted) {
-        setState(() {
-          _tarjetasMes++;
-          if (dt.day == now.day) _tarjetasHoy++;
-        });
+        final userId = t['usuario'] as int?;
+        final esDelUsuarioActual = userId == usuarioId;
+        final debeActualizar = _isSuperuser || esDelUsuarioActual;
+
+        if (debeActualizar) {
+          setState(() {
+            _tarjetasMes++;
+            if (dt.day == now.day) _tarjetasHoy++;
+          });
+
+          // Si es de hoy, actualizar ranking
+          if (dt.day == now.day &&
+              userId != null &&
+              _rankingUsuarios.isNotEmpty) {
+            final idx = _rankingUsuarios.indexWhere(
+              (r) => r['usuario_id'] == userId,
+            );
+            if (idx >= 0) {
+              _rankingUsuarios[idx]['total'] =
+                  (_rankingUsuarios[idx]['total'] as int) + 1;
+              // Re-ordenar ranking
+              _rankingUsuarios.sort(
+                (a, b) => (b['total'] as int).compareTo(a['total'] as int),
+              );
+              setState(() {});
+            } else {
+              // Si el usuario no está en el ranking, agrégalo
+              _rankingUsuarios.add({
+                'usuario_id': userId,
+                'nombre': t['usuario_nombre'] as String? ?? 'Usuario #$userId',
+                'total': 1,
+              });
+              _rankingUsuarios.sort(
+                (a, b) => (b['total'] as int).compareTo(a['total'] as int),
+              );
+              setState(() {});
+            }
+          }
+        }
       }
     } catch (_) {}
   }
@@ -383,10 +506,131 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
+  /// Recalcula el ranking de usuarios para HOY
+  /// Obtiene nombres de múltiples fuentes: cache, tarjetas previas, o genéricos
+  Future<void> _recalcularRankingHoy(
+    List<Map<String, dynamic>> tarjetas,
+    DateTime now,
+  ) async {
+    try {
+      // Agrupar tarjetas de HOY por usuario
+      final Map<int, int> conteoUsuarios = {};
+      for (final t in tarjetas) {
+        try {
+          final dt = DateTime.parse(t['fecha'] as String);
+          if (dt.year == now.year &&
+              dt.month == now.month &&
+              dt.day == now.day) {
+            final userId = (t['usuario'] as int?) ?? 0;
+            if (userId > 0) {
+              conteoUsuarios[userId] = (conteoUsuarios[userId] ?? 0) + 1;
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (conteoUsuarios.isEmpty) {
+        if (mounted) setState(() => _rankingUsuarios = []);
+        return;
+      }
+
+      // Obtener nombres desde múltiples fuentes
+      final prefs = await SharedPreferences.getInstance();
+      final Map<int, String> nombres = {};
+
+      // 1️⃣ Intentar desde cache_admin_usuarios
+      final usuariosJson = prefs.getString('cache_admin_usuarios');
+      if (usuariosJson != null) {
+        try {
+          final lista = json.decode(usuariosJson) as List;
+          for (final u in lista) {
+            if (u is Map<String, dynamic> && u['id'] != null) {
+              final id = u['id'] as int;
+              final nm =
+                  u['name'] as String? ?? u['username'] as String? ?? 'Usuario';
+              nombres[id] = nm;
+            }
+          }
+        } catch (_) {}
+      }
+
+      // 2️⃣ Agregar nombres desde tarjetas si existen
+      for (final t in tarjetas) {
+        try {
+          final userId = (t['usuario'] as int?) ?? 0;
+          if (userId > 0 && !nombres.containsKey(userId)) {
+            final nm = t['usuario_nombre'] as String? ?? 'Usuario #$userId';
+            nombres[userId] = nm;
+          }
+        } catch (_) {}
+      }
+
+      // 3️⃣ Agregar nombre del usuario actual
+      nombres[usuarioId] = name.isNotEmpty ? name : username;
+
+      // Construir ranking
+      final rankingCalc =
+          conteoUsuarios.entries
+              .map(
+                (e) => {
+                  'usuario_id': e.key,
+                  'nombre': nombres[e.key] ?? 'Usuario #${e.key}',
+                  'total': e.value,
+                },
+              )
+              .toList()
+            ..sort((a, b) => (b['total'] as int).compareTo(a['total'] as int));
+
+      if (mounted) {
+        setState(() => _rankingUsuarios = rankingCalc);
+        // Guardar en caché para recuperar si hay errores después
+        unawaited(_guardarRankingEnCache());
+      }
+    } catch (e) {
+      debugPrint('❌ Error recalculando ranking: $e');
+      // Si falla, recuperar del caché
+      unawaited(_recuperarRankingEnCache());
+    }
+  }
+
+  /// Recupera el ranking guardado en caché para mostrarlo inmediatamente
+  Future<void> _recuperarRankingEnCache() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final rankingJson = prefs.getString('ranking_usuarios_hoy');
+      if (rankingJson != null) {
+        try {
+          final ranking = (json.decode(rankingJson) as List)
+              .whereType<Map<String, dynamic>>()
+              .toList();
+          if (ranking.isNotEmpty && mounted) {
+            setState(() => _rankingUsuarios = ranking);
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
+  /// Guarda el ranking en caché para recuperarlo luego
+  Future<void> _guardarRankingEnCache() async {
+    try {
+      if (_rankingUsuarios.isEmpty) return;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        'ranking_usuarios_hoy',
+        json.encode(_rankingUsuarios),
+      );
+    } catch (e) {
+      debugPrint('⚠️ Error guardando ranking en caché: $e');
+    }
+  }
+
   @override
   void dispose() {
     _wsMultasSub?.cancel();
     _wsTarjetasSub?.cancel();
+    _rankingSaveTimer?.cancel();
+    _lifecycleListener.dispose();
     _ctrl.dispose();
     super.dispose();
   }
@@ -404,11 +648,7 @@ class _HomeScreenState extends State<HomeScreen>
               width: double.infinity,
               padding: const EdgeInsets.all(20),
               decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFF0A1628), Color(0xFF000000)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
+                gradient: AppColores.gradientePrincipal,
               ),
               child: const Row(
                 children: [
@@ -459,7 +699,6 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   Widget build(BuildContext context) {
     final scale = MediaQuery.textScalerOf(context).scale(1.0).clamp(0.8, 1.3);
-    final size = MediaQuery.of(context).size;
 
     return Scaffold(
       extendBodyBehindAppBar: true,
@@ -472,6 +711,11 @@ class _HomeScreenState extends State<HomeScreen>
         ),
         backgroundColor: Colors.transparent,
         elevation: 0,
+        flexibleSpace: Container(
+          decoration: const BoxDecoration(
+            gradient: AppColores.gradientePrincipal,
+          ),
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.info_outline),
@@ -481,126 +725,234 @@ class _HomeScreenState extends State<HomeScreen>
         ],
       ),
       drawer: _buildDrawer(context, scale),
-      body: Stack(
-        fit: StackFit.expand,
-        children: [
-          // Fondo degradado con formas decorativas
-          Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFF0A1628), Color(0xFF000000)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
+      body: FondoDecoradoApp(
+        child: SafeArea(
+          child: FadeTransition(
+            opacity: _fade,
+            child: SingleChildScrollView(
+              padding: EdgeInsets.symmetric(
+                horizontal: 24 * scale,
+                vertical: 20 * scale,
               ),
-            ),
-          ),
-          Positioned(
-            top: -size.width * .2,
-            left: -size.width * .25,
-            child: Transform.rotate(
-              angle: -0.4,
-              child: Container(
-                width: size.width * .7,
-                height: size.width * .7,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.05),
-                  borderRadius: BorderRadius.circular(40),
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            right: -size.width * .2,
-            bottom: -size.width * .25,
-            child: Transform.rotate(
-              angle: 0.8,
-              child: Container(
-                width: size.width * .9,
-                height: size.width * .9,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.04),
-                  borderRadius: BorderRadius.circular(200),
-                ),
-              ),
-            ),
-          ),
-          // Contenido central
-          SafeArea(
-            child: FadeTransition(
-              opacity: _fade,
-              child: SingleChildScrollView(
-                padding: EdgeInsets.symmetric(
-                  horizontal: 24 * scale,
-                  vertical: 20 * scale,
-                ),
-                child: Column(
-                  children: [
-                    SizedBox(height: 12 * scale),
-                    // Avatar
-                    CircleAvatar(
-                      radius: 48 * scale,
-                      backgroundColor: Colors.white.withValues(alpha: 0.2),
-                      child: Text(
-                        name.isNotEmpty ? name[0].toUpperCase() : "U",
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 980),
+                  child: Column(
+                    children: [
+                      SizedBox(height: 12 * scale),
+                      _buildHeroPanel(scale),
+                      SizedBox(height: 20 * scale),
+                      _buildMetricas(scale),
+                      SizedBox(height: 16 * scale),
+                      Text(
+                        'Usa el menú lateral para navegar por los módulos disponibles.',
+                        textAlign: TextAlign.center,
                         style: TextStyle(
-                          fontSize: 34 * scale,
+                          color: Colors.white60,
+                          fontSize: 13 * scale,
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                      SizedBox(height: 10 * scale),
+                      Text(
+                        _versionProyecto.isEmpty
+                            ? 'Cargando version...'
+                            : _versionProyecto,
+                        style: TextStyle(
+                          color: Colors.white30,
+                          fontSize: 11 * scale,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeroPanel(double scale) {
+    final saludo = name.isNotEmpty ? name : 'Usuario';
+    final anchoMaximo = 680 * scale;
+
+    return Container(
+      width: double.infinity,
+      constraints: BoxConstraints(maxWidth: anchoMaximo),
+      padding: EdgeInsets.all(20 * scale),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(28 * scale),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.14),
+            blurRadius: 28,
+            offset: const Offset(0, 18),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              CircleAvatar(
+                radius: 34 * scale,
+                backgroundColor: Colors.white.withValues(alpha: 0.18),
+                child: Text(
+                  name.isNotEmpty ? name[0].toUpperCase() : 'U',
+                  style: TextStyle(
+                    fontSize: 24 * scale,
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              SizedBox(width: 16 * scale),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 12 * scale,
+                        vertical: 7 * scale,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.10),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        _isSuperuser
+                            ? 'Perfil administrador'
+                            : 'Perfil operativo',
+                        style: TextStyle(
                           color: Colors.white,
-                          fontWeight: FontWeight.bold,
+                          fontSize: 11.5 * scale,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                     ),
-                    SizedBox(height: 16 * scale),
+                    SizedBox(height: 12 * scale),
                     Text(
-                      name.isNotEmpty ? "👋 $name!" : "Bienvenido 👋",
-                      style: TextStyle(
+                      'Hola, $saludo',
+                      style: GoogleFonts.outfit(
                         color: Colors.white,
-                        fontSize: 18 * scale,
-                        fontWeight: FontWeight.w600,
+                        fontSize: 28 * scale,
+                        fontWeight: FontWeight.w700,
+                        height: 1.05,
                       ),
                     ),
-                    SizedBox(height: 4 * scale),
+                    SizedBox(height: 6 * scale),
                     Text(
-                      "@$username",
+                      'Panel central con tus datos de cuenta y el estado actual de tu actividad.',
                       style: TextStyle(
-                        color: Colors.white70,
+                        color: Colors.white.withValues(alpha: 0.78),
                         fontSize: 14 * scale,
-                      ),
-                    ),
-                    SizedBox(height: 20 * scale),
-                    // Tarjetas info
-                    _infoCard(Icons.email, "Correo", email, scale),
-                    SizedBox(height: 10 * scale),
-                    _infoCard(
-                      Icons.access_time,
-                      "Último acceso",
-                      lastLogin,
-                      scale,
-                    ),
-                    SizedBox(height: 20 * scale),
-                    // ── Métricas del mes ──────────────────────────────────
-                    _buildMetricas(scale),
-                    SizedBox(height: 16 * scale),
-                    // Indicativo
-                    Text(
-                      "Usa el menú lateral para navegar 🔍",
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: Colors.white60,
-                        fontSize: 13 * scale,
-                        fontStyle: FontStyle.italic,
-                      ),
-                    ),
-                    SizedBox(height: 10 * scale),
-                    Text(
-                      '21032026',
-                      style: TextStyle(
-                        color: Colors.white30,
-                        fontSize: 11 * scale,
+                        height: 1.45,
                       ),
                     ),
                   ],
                 ),
               ),
+            ],
+          ),
+          SizedBox(height: 18 * scale),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final spacing = 10 * scale;
+              final esMovil = constraints.maxWidth < 620;
+              final anchoTarjeta = esMovil
+                  ? constraints.maxWidth
+                  : ((constraints.maxWidth - spacing) / 2).clamp(220.0, 360.0);
+
+              return Wrap(
+                spacing: spacing,
+                runSpacing: spacing,
+                children: [
+                  _heroDato(
+                    icon: Icons.alternate_email_rounded,
+                    etiqueta: 'Usuario',
+                    valor: username.isEmpty ? 'No disponible' : '@$username',
+                    scale: scale,
+                    ancho: anchoTarjeta,
+                  ),
+                  _heroDato(
+                    icon: Icons.email_outlined,
+                    etiqueta: 'Correo',
+                    valor: email.isEmpty ? 'No disponible' : email,
+                    scale: scale,
+                    ancho: anchoTarjeta,
+                  ),
+                  _heroDato(
+                    icon: Icons.history_toggle_off_rounded,
+                    etiqueta: 'Último acceso',
+                    valor: lastLogin,
+                    scale: scale,
+                    ancho: anchoTarjeta,
+                  ),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _heroDato({
+    required IconData icon,
+    required String etiqueta,
+    required String valor,
+    required double scale,
+    required double ancho,
+  }) {
+    return Container(
+      width: ancho,
+      constraints: BoxConstraints(minHeight: 72 * scale),
+      padding: EdgeInsets.symmetric(
+        horizontal: 14 * scale,
+        vertical: 12 * scale,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.09),
+        borderRadius: BorderRadius.circular(18 * scale),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: Colors.white, size: 18 * scale),
+          SizedBox(width: 10 * scale),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  etiqueta,
+                  style: TextStyle(
+                    color: Colors.white60,
+                    fontSize: 11.5 * scale,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                SizedBox(height: 2 * scale),
+                Text(
+                  valor,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 13.5 * scale,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
             ),
           ),
         ],
@@ -707,6 +1059,10 @@ class _HomeScreenState extends State<HomeScreen>
             ),
           ],
         ),
+
+        // Ranking de usuarios del día (siempre visible)
+        SizedBox(height: 10 * scale),
+        _buildRankingUsuarios(scale),
       ],
     );
   }
@@ -800,10 +1156,197 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
+  /// Ranking de usuarios del día (top por estacionamientos registrados hoy)
+  /// Visible para todos los usuarios, se actualiza en tiempo real
+  Widget _buildRankingUsuarios(double scale) {
+    final maxTotal = _rankingUsuarios.isNotEmpty
+        ? (_rankingUsuarios.first['total'] as int)
+        : 1;
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(14 * scale),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(14 * scale),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.20)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Título
+          Row(
+            children: [
+              const Icon(
+                Icons.leaderboard_rounded,
+                color: Colors.amberAccent,
+                size: 15,
+              ),
+              const SizedBox(width: 6),
+              const Text(
+                'Ranking — Hoy',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.5,
+                ),
+              ),
+              const Spacer(),
+              Icon(
+                Icons.emoji_events_rounded,
+                color: Colors.amber.shade300,
+                size: 14,
+              ),
+            ],
+          ),
+          SizedBox(height: 2 * scale),
+          // Subtítulo: quién registra más estacionamientos
+          Text(
+            'Usuarios que registran ocupación de estacionamientos',
+            style: TextStyle(
+              color: Colors.white54,
+              fontSize: 10 * scale,
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+          SizedBox(height: 10 * scale),
+
+          // Si no hay datos, mostrar mensaje informativo
+          if (_rankingUsuarios.isEmpty)
+            Padding(
+              padding: EdgeInsets.symmetric(vertical: 8 * scale),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.info_outline_rounded,
+                    size: 14 * scale,
+                    color: Colors.white38,
+                  ),
+                  SizedBox(width: 6 * scale),
+                  Text(
+                    'Aún no hay registros de ocupación hoy',
+                    style: TextStyle(
+                      color: Colors.white38,
+                      fontSize: 12 * scale,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            // Lista de usuarios ordenados
+            ...List.generate(_rankingUsuarios.length.clamp(0, 10), (i) {
+              final item = _rankingUsuarios[i];
+              final nombre = item['nombre'] as String;
+              final total = item['total'] as int;
+              final pct = maxTotal > 0 ? total / maxTotal : 0.0;
+
+              Color medalla;
+              if (i == 0) {
+                medalla = Colors.amber;
+              } else if (i == 1) {
+                medalla = Colors.grey.shade400;
+              } else if (i == 2) {
+                medalla = Colors.brown.shade300;
+              } else {
+                medalla = Colors.white38;
+              }
+
+              return Padding(
+                padding: EdgeInsets.only(bottom: 6 * scale),
+                child: Row(
+                  children: [
+                    // Posición
+                    Container(
+                      width: 22 * scale,
+                      alignment: Alignment.center,
+                      child: i < 3
+                          ? Icon(
+                              Icons.emoji_events_rounded,
+                              color: medalla,
+                              size: 16 * scale,
+                            )
+                          : Text(
+                              '${i + 1}',
+                              style: TextStyle(
+                                color: Colors.white38,
+                                fontSize: 11 * scale,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                    ),
+                    SizedBox(width: 8 * scale),
+
+                    // Nombre
+                    SizedBox(
+                      width: 100 * scale,
+                      child: Text(
+                        nombre,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 12 * scale,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    SizedBox(width: 6 * scale),
+
+                    // Barra de progreso
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: LinearProgressIndicator(
+                          value: pct,
+                          minHeight: 8 * scale,
+                          backgroundColor: Colors.white.withValues(alpha: 0.10),
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            i == 0
+                                ? Colors.amber
+                                : i == 1
+                                ? Colors.grey.shade400
+                                : Colors.white.withValues(alpha: 0.5),
+                          ),
+                        ),
+                      ),
+                    ),
+                    SizedBox(width: 8 * scale),
+
+                    // Total
+                    Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 8 * scale,
+                        vertical: 3 * scale,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        '$total',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 12 * scale,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+        ],
+      ),
+    );
+  }
+
   // Drawer lateral
   Drawer _buildDrawer(BuildContext context, double scale) {
     return Drawer(
-      backgroundColor: const Color(0xFFF0F4FF),
+      backgroundColor: AppColores.acentoFondo,
       child: Column(
         children: [
           // ── Header con gradiente ──────────────────────────────────────
@@ -811,11 +1354,7 @@ class _HomeScreenState extends State<HomeScreen>
             width: double.infinity,
             padding: EdgeInsets.fromLTRB(20, 48 * scale, 20, 24),
             decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFF0A1628), Color(0xFF000000)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
+              gradient: AppColores.gradientePrincipal,
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1005,7 +1544,7 @@ class _HomeScreenState extends State<HomeScreen>
                         const Icon(
                           Icons.admin_panel_settings_rounded,
                           size: 12,
-                          color: Color(0xFF1565C0),
+                          color: AppColores.acentoAdmin,
                         ),
                         const SizedBox(width: 6),
                         Text(
@@ -1013,7 +1552,7 @@ class _HomeScreenState extends State<HomeScreen>
                           style: TextStyle(
                             fontSize: 10 * scale,
                             fontWeight: FontWeight.bold,
-                            color: const Color(0xFF1565C0),
+                            color: AppColores.acentoAdmin,
                             letterSpacing: 1.2,
                           ),
                         ),
@@ -1063,7 +1602,9 @@ class _HomeScreenState extends State<HomeScreen>
           Padding(
             padding: const EdgeInsets.only(bottom: 16),
             child: Text(
-              '21032026',
+              _versionProyecto.isEmpty
+                  ? 'Cargando version...'
+                  : _versionProyecto,
               style: TextStyle(
                 color: Colors.grey.shade400,
                 fontSize: 11 * scale,
@@ -1071,66 +1612,6 @@ class _HomeScreenState extends State<HomeScreen>
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  // Tarjeta tipo glass - tamaño aumentado
-  Widget _infoCard(IconData icon, String title, String value, double scale) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(16 * scale),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-        child: Container(
-          width: double.infinity,
-          padding: EdgeInsets.symmetric(
-            vertical: 16 * scale,
-            horizontal: 20 * scale,
-          ),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(16 * scale),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.25)),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.15),
-                blurRadius: 8,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: Row(
-            children: [
-              Icon(icon, color: Colors.white, size: 24 * scale),
-              SizedBox(width: 12 * scale),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: TextStyle(
-                        color: Colors.white70,
-                        fontSize: 14 * scale,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    SizedBox(height: 4 * scale),
-                    Text(
-                      value.isEmpty ? "No disponible" : value,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 15 * scale,
-                        fontWeight: FontWeight.w400,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }
@@ -1146,18 +1627,18 @@ class _HomeScreenState extends State<HomeScreen>
     final iconColor = isLogout
         ? Colors.red.shade600
         : isAdmin
-        ? const Color(0xFF1565C0)
-        : const Color(0xFF1565C0);
+        ? AppColores.acentoAdmin
+        : AppColores.acentoAdmin;
     final iconBg = isLogout
         ? Colors.red.shade50
         : isAdmin
-        ? const Color(0xFF1565C0).withValues(alpha: 0.15)
-        : const Color(0xFF1565C0).withValues(alpha: 0.10);
+        ? AppColores.acentoAdmin.withValues(alpha: 0.15)
+        : AppColores.acentoAdmin.withValues(alpha: 0.10);
     final textColor = isLogout
         ? Colors.red.shade600
         : isAdmin
-        ? const Color(0xFF1565C0)
-        : const Color(0xFF0A1628);
+        ? AppColores.acentoAdmin
+        : AppColores.primario;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),

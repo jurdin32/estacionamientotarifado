@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:estacionamientotarifado/core/colores.dart';
 import 'package:estacionamientotarifado/home_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:estacionamientotarifado/servicios/httpMonitorizado.dart';
@@ -14,8 +15,9 @@ class CambiarContrasenaScreen extends StatefulWidget {
 }
 
 class _CambiarContrasenaScreenState extends State<CambiarContrasenaScreen> {
-  static const _colorPrimario = Color(0xFF0A1628);
-  static const _colorSecundario = Color(0xFF1565C0);
+  static const _colorPrimario = AppColores.primario;
+  static const _colorSecundario = AppColores.acentoAdmin;
+  static const _colorFondo = AppColores.acentoFondo;
 
   final _formKey = GlobalKey<FormState>();
   final _actualCtrl = TextEditingController();
@@ -158,11 +160,7 @@ class _CambiarContrasenaScreenState extends State<CambiarContrasenaScreen> {
               width: double.infinity,
               padding: const EdgeInsets.all(20),
               decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFF0A1628), Color(0xFF000000)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
+                gradient: AppColores.gradientePrincipal,
               ),
               child: const Row(
                 children: [
@@ -215,16 +213,12 @@ class _CambiarContrasenaScreenState extends State<CambiarContrasenaScreen> {
     return PopScope(
       canPop: !widget.forzarCambio,
       child: Scaffold(
-        backgroundColor: const Color(0xFFF0F4FF),
+        backgroundColor: _colorFondo,
         appBar: AppBar(
           centerTitle: true,
           flexibleSpace: Container(
             decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFF0A1628), Color(0xFF000000)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
+              gradient: AppColores.gradientePrincipal,
             ),
           ),
           title: Text(
@@ -292,11 +286,7 @@ class _CambiarContrasenaScreenState extends State<CambiarContrasenaScreen> {
                       width: 80,
                       height: 80,
                       decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [_colorPrimario, _colorSecundario],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
+                        gradient: AppColores.gradientePrincipal,
                         shape: BoxShape.circle,
                         boxShadow: [
                           BoxShadow(
@@ -393,11 +383,7 @@ class _CambiarContrasenaScreenState extends State<CambiarContrasenaScreen> {
                     height: 52,
                     child: DecoratedBox(
                       decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [_colorPrimario, _colorSecundario],
-                          begin: Alignment.centerLeft,
-                          end: Alignment.centerRight,
-                        ),
+                        gradient: AppColores.gradientePrincipal,
                         borderRadius: BorderRadius.circular(14),
                         boxShadow: [
                           BoxShadow(

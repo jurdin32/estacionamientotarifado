@@ -29,11 +29,11 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
   List<Estacionamiento> _rangedEstaciones = [];
   List<Estacionamiento_Tarjeta> _estacionamientosTarjeta = [];
 
-  /// Mapa {numero_tarjeta → minutos_consumidos} sincronizado desde /api/tarjeta/.
+  /// Mapa {numero_tarjeta ->  minutos_consumidos} sincronizado desde /api/tarjeta/.
   /// Es la fuente de verdad para calcular el saldo disponible en cada tarjeta.
   Map<int, int> _tiemposTarjeta = {};
 
-  /// Mapa {usuario_id → nombre} para mostrar quién registró cada estacionamiento.
+  /// Mapa {usuario_id ->  nombre} para mostrar quién registró cada estacionamiento.
   Map<int, String> _nombresUsuarios = {};
 
   bool _isLoading = true;
@@ -138,18 +138,18 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
         _appEnSegundoPlano = true;
         _pollingTimer?.cancel();
         ServicioWebSocket.instancia.pausar(); // reduce heartbeat, NO cierra
-        debugPrint('📱 Background — WS vivo, UI suspendida');
+        debugPrint('[MOVIL]  Background — WS vivo, UI suspendida');
         break;
       case AppLifecycleState.resumed:
         _appEnSegundoPlano = false;
         // Ignorar resumed duplicados en ráfaga (< 2s entre sí)
         final ahora = DateTime.now();
         if (ahora.difference(_ultimoResumed).inSeconds < 2) {
-          debugPrint('📱 Foreground — duplicado ignorado');
+          debugPrint('[MOVIL]  Foreground — duplicado ignorado');
           break;
         }
         _ultimoResumed = ahora;
-        debugPrint('📱 Foreground — restaurando UI');
+        debugPrint('[MOVIL]  Foreground — restaurando UI');
         _reanudarOperaciones();
         break;
       case AppLifecycleState.inactive:
@@ -162,7 +162,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
         _wsEstadoSub?.cancel();
         ServicioWebSocket.instancia.desconectar();
         _wsConectado = false;
-        debugPrint('📱 Detached — WS cerrado');
+        debugPrint('[MOVIL]  Detached — WS cerrado');
         break;
     }
   }
@@ -179,7 +179,9 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
         _filteredEstaciones = _filterEstaciones(_searchQuery);
         _rangedEstaciones = _computeRangedEstaciones(_filteredEstaciones);
       });
-      debugPrint('🔄 UI sincronizada con datos acumulados en background');
+      debugPrint(
+        '[REINTENTAR]  UI sincronizada con datos acumulados en background',
+      );
     }
 
     // Si WS no reconectó, activar fallback (solo 1 timer a la vez)
@@ -208,11 +210,11 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
       if (conectado) {
         _wsConectado = true;
         if (!_appEnSegundoPlano) _cancelarFallbackPolling();
-        debugPrint('🟢 WS conectado — polling HTTP desactivado');
+        debugPrint('[VERDE]  WS conectado — polling HTTP desactivado');
       } else {
         _wsConectado = false;
         if (!_appEnSegundoPlano) {
-          debugPrint('🔴 WS desconectado — activando fallback polling');
+          debugPrint('[ROJO]  WS desconectado — activando fallback polling');
           _iniciarFallbackPolling();
         }
       }
@@ -268,7 +270,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
               if (local != null) lista[i] = local;
               continue;
             }
-            // No revertir ocupado→libre si hay tarjeta activa local
+            // No revertir ocupado-> libre si hay tarjeta activa local
             final local = mapaLocal[remoto.id];
             if (local != null &&
                 local.estado == true &&
@@ -277,7 +279,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
                   (t) => t.estacionId == remoto.id,
                 )) {
               debugPrint(
-                '🛡️ WS snapshot: protegiendo estación #${local.numero} '
+                '[PROTEGIDO]  WS snapshot: protegiendo estación #${local.numero} '
                 '(tiene tarjeta activa)',
               );
               lista[i] = local;
@@ -330,7 +332,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
             nuevo.estado == false &&
             _estacionamientosTarjeta.any((t) => t.estacionId == nuevo.id)) {
           debugPrint(
-            '🛡️ WS update: bloqueando liberación de estación '
+            '[PROTEGIDO]  WS update: bloqueando liberación de estación '
             '#${actual.numero} (tiene tarjeta activa)',
           );
           return;
@@ -362,7 +364,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
         unawaited(_persistirCacheCompleto());
       }
     } catch (e) {
-      debugPrint('⚠️ Error procesando WS estaciones: $e');
+      debugPrint('[ADVERTENCIA]  Error procesando WS estaciones: $e');
     }
   }
 
@@ -456,7 +458,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
         }
       }
     } catch (e) {
-      debugPrint('⚠️ Error procesando WS tarjetas: $e');
+      debugPrint('[ADVERTENCIA]  Error procesando WS tarjetas: $e');
     }
   }
 
@@ -621,10 +623,10 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
       );
 
       debugPrint(
-        '🔄 Sync: ${estacionesCambiadas.length} est, +${tarjetasActualizadas.length} tar, -${tarjetasLiberadas.length} lib',
+        '[REINTENTAR]  Sync: ${estacionesCambiadas.length} est, +${tarjetasActualizadas.length} tar, -${tarjetasLiberadas.length} lib',
       );
     } catch (e) {
-      debugPrint('⚠️ Sincronización silenciosa: $e');
+      debugPrint('[ADVERTENCIA]  Sincronización silenciosa: $e');
     }
   }
 
@@ -635,7 +637,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
       final result = results.isNotEmpty
           ? results.first
           : ConnectivityResult.none;
-      debugPrint('📡 Estado de conectividad: $result');
+      debugPrint('[ANTENA]  Estado de conectividad: $result');
       if (result != ConnectivityResult.none && mounted && !_appEnSegundoPlano) {
         _reintentarConexion();
       }
@@ -648,7 +650,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
     final ahora = DateTime.now();
     if (ahora.difference(_ultimoReintento).inSeconds < 15) return;
     _ultimoReintento = ahora;
-    debugPrint('🔄 Red recuperada — reintentando WS...');
+    debugPrint('[REINTENTAR]  Red recuperada — reintentando WS...');
     // Prioridad: reconectar WS. Si ya está conectado, no hace nada.
     // Solo sincronizar HTTP si WS sigue caído después de un breve delay.
     final ws = ServicioWebSocket.instancia;
@@ -672,9 +674,9 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
     try {
       // Configurar el manejador de notificaciones recibidas
       OneSignal.Notifications.addClickListener(_handleNotificationClicked);
-      debugPrint('✅ OneSignal inicializado correctamente');
+      debugPrint('[OK]  OneSignal inicializado correctamente');
     } catch (e) {
-      debugPrint('❌ Error al inicializar OneSignal: $e');
+      debugPrint('[X]  Error al inicializar OneSignal: $e');
     }
   }
 
@@ -699,7 +701,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
         final accion = additionalData['accion']?.toString() ?? '';
 
         debugPrint(
-          '🔍 Analizando notificación - Tipo: $tipo, EstacionId: $estacionId, Acción: $accion',
+          '[LUPA]  Analizando notificación - Tipo: $tipo, EstacionId: $estacionId, Acción: $accion',
         );
 
         // Si es una notificación relacionada con estacionamientos, actualizar datos
@@ -720,13 +722,13 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
         }
       }
     } catch (e) {
-      debugPrint('❌ Error al procesar notificación: $e');
+      debugPrint('[X]  Error al procesar notificación: $e');
     }
   }
 
   // Manejar la actualización de estacionamientos desde notificación
   void _handleEstacionamientoUpdate() {
-    debugPrint('🔄 Actualizando datos por notificación...');
+    debugPrint('[REINTENTAR]  Actualizando datos por notificación...');
 
     if (mounted && !_appEnSegundoPlano) {
       // Mostrar mensaje de actualización
@@ -758,12 +760,15 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
     }
     try {
       final connectivityResult = await Connectivity().checkConnectivity();
-      if (connectivityResult == ConnectivityResult.none) return;
+      if (connectivityResult.isEmpty ||
+          connectivityResult.first == ConnectivityResult.none) {
+        return;
+      }
 
       await _sincronizarTarjetasSilencioso();
-      debugPrint('✅ Datos actualizados por notificación (fallback HTTP)');
+      debugPrint('[OK]  Datos actualizados por notificación (fallback HTTP)');
     } catch (e) {
-      debugPrint('⚠️ _forceRefreshData: $e');
+      debugPrint('[ADVERTENCIA]  _forceRefreshData: $e');
     }
   }
 
@@ -794,9 +799,9 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('rango_estacionamientos', rango);
-      debugPrint('✅ Rango guardado en preferencias: $rango');
+      debugPrint('[OK]  Rango guardado en preferencias: $rango');
     } catch (e) {
-      debugPrint('❌ Error guardando rango: $e');
+      debugPrint('[X]  Error guardando rango: $e');
       if (mounted && !_appEnSegundoPlano) {
         _showCustomSnackBar('Error al guardar el rango: $e', isError: true);
       }
@@ -921,7 +926,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
             .toList();
       }
 
-      // --- Datos de caché: tarjetas tiempo (numero → minutos consumidos) ---
+      // --- Datos de caché: tarjetas tiempo (numero ->  minutos consumidos) ---
       final tarjetasTiempoStr = prefs.getString('tarjetas_tiempo');
       Map<int, int> cachedTiemposTarjeta = {};
       if (tarjetasTiempoStr != null) {
@@ -1083,8 +1088,8 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
     try {
       return Estacionamiento_Tarjeta.fromJson(json);
     } catch (e) {
-      debugPrint('❌ Error parseando estacionamiento tarjeta: $e');
-      debugPrint('❌ JSON problemático: $json');
+      debugPrint('[X]  Error parseando estacionamiento tarjeta: $e');
+      debugPrint('[X]  JSON problemático: $json');
       return null;
     }
   }
@@ -1092,7 +1097,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
   Future<void> _fetchAndCacheEstacionamientos() async {
     if (_appEnSegundoPlano) {
       debugPrint(
-        '⏸️  App en segundo plano - Saltando actualización de estacionamientos',
+        '[PAUSE]   App en segundo plano - Saltando actualización de estacionamientos',
       );
       return;
     }
@@ -1100,17 +1105,21 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
     try {
       // Verificar conectividad antes de hacer la solicitud
       final connectivityResult = await Connectivity().checkConnectivity();
-      final hasConnection = connectivityResult != ConnectivityResult.none;
+      final hasConnection =
+          connectivityResult.isNotEmpty &&
+          connectivityResult.first != ConnectivityResult.none;
 
       if (!hasConnection) {
-        debugPrint('📵 Sin conexión - No se pueden obtener estacionamientos');
+        debugPrint(
+          '[CELULAR]  Sin conexión - No se pueden obtener estacionamientos',
+        );
         return;
       }
 
       final estaciones = await fetchEstacionamientos(token: _token).timeout(
         const Duration(seconds: 25),
         onTimeout: () {
-          debugPrint('⏰ Timeout al obtener estacionamientos');
+          debugPrint('[ALARMA]  Timeout al obtener estacionamientos');
           throw TimeoutException(
             'Tiempo de espera agotado para obtener estacionamientos',
           );
@@ -1136,14 +1145,14 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
       }
     } catch (e) {
       // Silencioso: actualización en background, no interrumpir al usuario.
-      debugPrint('⚠️ Sync estacionamientos: $e');
+      debugPrint('[ADVERTENCIA]  Sync estacionamientos: $e');
     }
   }
 
   Future<void> _fetchAndCacheEstacionamientosTarjeta() async {
     if (_appEnSegundoPlano) {
       debugPrint(
-        '⏸️  App en segundo plano - Saltando actualización de tarjetas',
+        '[PAUSE]   App en segundo plano - Saltando actualización de tarjetas',
       );
       return;
     }
@@ -1151,11 +1160,13 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
     try {
       // Verificar conectividad antes de hacer la solicitud
       final connectivityResult = await Connectivity().checkConnectivity();
-      final hasConnection = connectivityResult != ConnectivityResult.none;
+      final hasConnection =
+          connectivityResult.isNotEmpty &&
+          connectivityResult.first != ConnectivityResult.none;
 
       if (!hasConnection) {
         debugPrint(
-          '📵 Sin conexión - No se pueden obtener estacionamientos tarjeta',
+          '[CELULAR]  Sin conexión - No se pueden obtener estacionamientos tarjeta',
         );
         return;
       }
@@ -1163,7 +1174,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
       final tarjetas = await fetchEstacionamientoTarjeta(token: _token).timeout(
         const Duration(seconds: 25),
         onTimeout: () {
-          debugPrint('⏰ Timeout al obtener estacionamientos tarjeta');
+          debugPrint('[ALARMA]  Timeout al obtener estacionamientos tarjeta');
           throw TimeoutException(
             'Tiempo de espera agotado para obtener registros',
           );
@@ -1189,11 +1200,11 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
     } catch (e) {
       // Error silencioso: es una sincronización en background.
       // No interrumpir al usuario con snackbars por fallos de red temporales.
-      debugPrint('⚠️ Sync tarjetas: $e');
+      debugPrint('[ADVERTENCIA]  Sync tarjetas: $e');
     }
   }
 
-  /// Descarga /api/tarjeta/ y actualiza el mapa {numero → tiempo consumido}.
+  /// Descarga /api/tarjeta/ y actualiza el mapa {numero ->  tiempo consumido}.
   /// Se llama en cada ciclo de polling para mantener el saldo siempre actualizado.
   Future<void> _fetchAndCacheTarjetasTiempo() async {
     if (_appEnSegundoPlano || !mounted) return;
@@ -1216,7 +1227,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
         setState(() => _tiemposTarjeta = mapa);
       }
     } catch (e) {
-      debugPrint('⚠️ Sync tarjetas_tiempo: $e');
+      debugPrint('[ADVERTENCIA]  Sync tarjetas_tiempo: $e');
     }
   }
 
@@ -1225,7 +1236,9 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
     // esperamos la confirmación del servidor.
     _enProceso.add(estacionId);
     try {
-      debugPrint('🔄 Liberando estacionamiento expirado: $estacionId');
+      debugPrint(
+        '[REINTENTAR]  Liberando estacionamiento expirado: $estacionId',
+      );
 
       _updateUIAfterChange(estacionId, false, '');
 
@@ -1239,7 +1252,9 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
         // Solo intentar liberar en servidor si la app está activa y hay conexión
         if (!_appEnSegundoPlano) {
           final connectivityResult = await Connectivity().checkConnectivity();
-          final hasConnection = connectivityResult != ConnectivityResult.none;
+          final hasConnection =
+              connectivityResult.isNotEmpty &&
+              connectivityResult.first != ConnectivityResult.none;
 
           if (hasConnection) {
             await actualizarRegistro(
@@ -1248,11 +1263,13 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
               estado: false,
               token: _token,
             ).timeout(const Duration(seconds: 10));
-            debugPrint('✅ Estacionamiento $estacionId liberado en servidor');
+            debugPrint(
+              '[OK]  Estacionamiento $estacionId liberado en servidor',
+            );
           }
         }
       } catch (e) {
-        debugPrint('⚠️ Error al liberar en servidor: $e');
+        debugPrint('[ADVERTENCIA]  Error al liberar en servidor: $e');
       }
 
       if (mounted && !_appEnSegundoPlano) {
@@ -1263,9 +1280,13 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
         });
       }
 
-      debugPrint('✅ Estacionamiento $estacionId liberado por tiempo expirado');
+      debugPrint(
+        '[OK]  Estacionamiento $estacionId liberado por tiempo expirado',
+      );
     } catch (e) {
-      debugPrint('❌ Error al liberar estacionamiento expirado $estacionId: $e');
+      debugPrint(
+        '[X]  Error al liberar estacionamiento expirado $estacionId: $e',
+      );
     } finally {
       // Mantener guardia 2s para que el WS broadcast llegue
       Future.delayed(
@@ -1374,7 +1395,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
     );
   }
 
-  /// Índice de tab → filtro de estado.
+  /// Índice de tab ->  filtro de estado.
   void _cambiarFiltroTab(int index) {
     const estados = ['todos', 'disponibles', 'ocupados', 'deshabilitados'];
     if (index < 0 || index >= estados.length) return;
@@ -1461,10 +1482,10 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
         ),
       );
       debugPrint(
-        '✅ Estado actualizado - Estacionamiento #${estacion.numero}: ${estado ? 'OCUPADO' : 'DISPONIBLE'}',
+        '[OK]  Estado actualizado - Estacionamiento #${estacion.numero}: ${estado ? 'OCUPADO' : 'DISPONIBLE'}',
       );
     } catch (e) {
-      debugPrint('❌ Error al actualizar estado local: $e');
+      debugPrint('[X]  Error al actualizar estado local: $e');
       if (mounted && !_appEnSegundoPlano) {
         _showCustomSnackBar('Error al actualizar estado: $e', isError: true);
       }
@@ -1495,7 +1516,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
           );
         }
       } catch (e) {
-        debugPrint('⚠️ Error al persistir caché: $e');
+        debugPrint('[ADVERTENCIA]  Error al persistir caché: $e');
       }
     });
   }
@@ -2045,6 +2066,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
                     ),
                     const SizedBox(height: 10),
                     _CountdownTicker(
+                      key: ValueKey('countdown_${estacion.id}'),
                       horaSalida: tarjetaInfo.horaSalida,
                       fecha: tarjetaInfo.fecha,
                       tiempoTotalMinutos: tarjetaInfo.tiempo,
@@ -2890,7 +2912,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
                                       // 2. Cerrar diálogo al instante
                                       Navigator.pop(context);
                                       _showCustomSnackBar(
-                                        '✅ Estacionamiento #${estacionCapturado.numero} registrado',
+                                        '[OK]  Estacionamiento #${estacionCapturado.numero} registrado',
                                       );
 
                                       // 3. Sincronizar con el servidor en background
@@ -2954,7 +2976,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
                                               _persistirCacheCompleto(),
                                             );
                                             _showCustomSnackBar(
-                                              '❌ Error al sincronizar con el servidor: $e',
+                                              '[X]  Error al sincronizar con el servidor: $e',
                                               isError: true,
                                             );
                                           }
@@ -3439,127 +3461,128 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
             ),
             child: Column(
               children: [
-                TextField(
-                  controller: _searchController,
-                  decoration: InputDecoration(
-                    hintText: "Buscar por número de estacionamiento...",
-                    prefixIcon: const Icon(Icons.search, color: Colors.grey),
-                    filled: true,
-                    fillColor: Colors.grey.shade50,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none,
-                    ),
-                    contentPadding: EdgeInsets.symmetric(
-                      vertical: size.height * 0.015,
-                      horizontal: 16,
-                    ),
-                  ),
-                  onChanged: _onSearchChanged,
-                  keyboardType: TextInputType.number,
-                ),
-
-                SizedBox(height: size.height * 0.015),
-
+                // ── Fila: Buscador + icono filtro + contador ─────────────
                 Row(
                   children: [
-                    if (_rangoEstacionamientos.isNotEmpty) ...[
-                      Container(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: size.width * 0.03,
-                          vertical: size.height * 0.01,
-                        ),
-                        decoration: BoxDecoration(
-                          color: primaryColor.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: primaryColor.withValues(alpha: 0.3),
+                    // Buscador
+                    Expanded(
+                      child: TextField(
+                        controller: _searchController,
+                        decoration: InputDecoration(
+                          hintText: "Buscar por número...",
+                          prefixIcon: const Icon(
+                            Icons.search,
+                            color: Colors.grey,
                           ),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.filter_alt,
-                              size: size.width * 0.04,
-                              color: primaryColor,
-                            ),
-                            SizedBox(width: size.width * 0.02),
-                            Text(
-                              'Rango: $_rangoEstacionamientos',
-                              style: TextStyle(
-                                fontSize: size.width * 0.035,
-                                color: primaryColor,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      SizedBox(width: size.width * 0.03),
-                    ],
-
-                    Container(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(12),
-                        boxShadow: [
-                          BoxShadow(
-                            color: primaryColor.withValues(alpha: 0.1),
-                            blurRadius: 4,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: _rangoEstacionamientos.isNotEmpty
-                              ? primaryColor
-                              : Colors.grey.shade200,
-                          foregroundColor: _rangoEstacionamientos.isNotEmpty
-                              ? Colors.white
-                              : Colors.grey.shade700,
-                          padding: EdgeInsets.symmetric(
-                            horizontal: size.width * 0.04,
-                            vertical: size.height * 0.012,
-                          ),
-                          shape: RoundedRectangleBorder(
+                          filled: true,
+                          fillColor: Colors.grey.shade50,
+                          border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide.none,
+                          ),
+                          contentPadding: EdgeInsets.symmetric(
+                            vertical: size.height * 0.015,
+                            horizontal: 16,
                           ),
                         ),
-                        icon: Icon(
-                          Icons.filter_alt,
-                          size: size.width * 0.045,
-                          color: _rangoEstacionamientos.isNotEmpty
-                              ? Colors.white
-                              : Colors.grey.shade700,
-                        ),
-                        label: Text(
-                          _rangoEstacionamientos.isNotEmpty
-                              ? "Cambiar"
-                              : "Filtrar",
-                          style: TextStyle(
-                            fontSize: size.width * 0.035,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        onPressed: () {
-                          _mostrarDialogoRango(context);
-                        },
+                        onChanged: _onSearchChanged,
+                        keyboardType: TextInputType.number,
                       ),
                     ),
-
-                    const Spacer(),
-
+                    SizedBox(width: size.width * 0.025),
+                    // Icono filtro
+                    GestureDetector(
+                      onTap: () => _mostrarDialogoRango(context),
+                      child: Container(
+                        padding: EdgeInsets.all(size.width * 0.03),
+                        decoration: BoxDecoration(
+                          color: _rangoEstacionamientos.isNotEmpty
+                              ? primaryColor
+                              : Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: _rangoEstacionamientos.isNotEmpty
+                                ? primaryColor
+                                : Colors.grey.shade300,
+                          ),
+                        ),
+                        child: Icon(
+                          Icons.filter_alt_rounded,
+                          size: size.width * 0.055,
+                          color: _rangoEstacionamientos.isNotEmpty
+                              ? Colors.white
+                              : Colors.grey.shade600,
+                        ),
+                      ),
+                    ),
+                    SizedBox(width: size.width * 0.025),
+                    // Contador
                     Text(
                       '${_rangedEstaciones.length}/${_estaciones.length}',
                       style: TextStyle(
                         fontSize: size.width * 0.035,
                         color: Colors.grey.shade600,
-                        fontWeight: FontWeight.w500,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ],
                 ),
+
+                // ── Badge de rango activo ────────────────────────────────
+                if (_rangoEstacionamientos.isNotEmpty) ...[
+                  SizedBox(height: size.height * 0.01),
+                  Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: size.width * 0.03,
+                      vertical: size.height * 0.008,
+                    ),
+                    decoration: BoxDecoration(
+                      color: primaryColor.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: primaryColor.withValues(alpha: 0.3),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        GestureDetector(
+                          onTap: () => _mostrarDialogoRango(context),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.filter_alt,
+                                size: size.width * 0.035,
+                                color: primaryColor,
+                              ),
+                              SizedBox(width: size.width * 0.015),
+                              Text(
+                                'Desde $_rangoEstacionamientos',
+                                style: TextStyle(
+                                  fontSize: size.width * 0.032,
+                                  color: primaryColor,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        SizedBox(width: size.width * 0.02),
+                        GestureDetector(
+                          onTap: () {
+                            _limpiarRango();
+                          },
+                          child: Icon(
+                            Icons.close,
+                            size: size.width * 0.035,
+                            color: primaryColor.withValues(alpha: 0.6),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
                 if (_estaciones.isNotEmpty) ...[
                   SizedBox(height: size.height * 0.008),
                   const Divider(
@@ -3747,114 +3770,380 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
   }
 
   void _mostrarDialogoRango(BuildContext context) {
-    final size = MediaQuery.of(context).size;
-    final TextEditingController rangoDialogController = TextEditingController(
-      text: _rangoEstacionamientos,
+    // Extraer valores actuales del rango
+    int desdeInicial = 1;
+    int hastaInicial = 10;
+    if (_rangoEstacionamientos.isNotEmpty) {
+      final partes = _rangoEstacionamientos.split('-');
+      if (partes.length == 2) {
+        desdeInicial = int.tryParse(partes[0].trim()) ?? 1;
+        hastaInicial = int.tryParse(partes[1].trim()) ?? 10;
+      }
+    }
+
+    final TextEditingController desdeController = TextEditingController(
+      text: desdeInicial.toString(),
+    );
+    final TextEditingController hastaController = TextEditingController(
+      text: hastaInicial.toString(),
     );
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(
-              Icons.filter_alt,
-              color: primaryColor,
-              size: size.width * 0.06,
-            ),
-            SizedBox(width: size.width * 0.03),
-            Text(
-              "Filtrar por rango",
-              style: TextStyle(fontSize: size.width * 0.045),
-            ),
-          ],
-        ),
-        content: Column(
+      builder: (context) => Dialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              "Ingrese el rango de estacionamientos que desea ver:",
-              style: TextStyle(
-                fontSize: size.width * 0.035,
-                color: Colors.grey,
-              ),
-            ),
-            SizedBox(height: size.height * 0.01),
-            Text(
-              "Formato: inicio-fin (ej: 1-10)",
-              style: TextStyle(
-                fontSize: size.width * 0.03,
-                color: Colors.grey.shade600,
-                fontStyle: FontStyle.italic,
-              ),
-            ),
-            SizedBox(height: size.height * 0.02),
-            TextField(
-              controller: rangoDialogController,
-              decoration: InputDecoration(
-                hintText: "1-10",
-                prefixIcon: const Icon(Icons.numbers),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                contentPadding: EdgeInsets.symmetric(
-                  vertical: size.height * 0.02,
-                  horizontal: 16,
+            // ── Cabecera con gradiente ────────────────────────────────
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(20, 22, 20, 20),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Color(0xFF0A1628), Color(0xFF000000)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
                 ),
               ),
-              keyboardType: TextInputType.text,
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(
+                      Icons.filter_alt_rounded,
+                      color: Colors.white,
+                      size: 22,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Text(
+                      'Filtrar por rango',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 17,
+                      ),
+                    ),
+                  ),
+                  GestureDetector(
+                    onTap: () => Navigator.pop(context),
+                    child: Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.15),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.close,
+                        color: Colors.white70,
+                        size: 18,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // ── Cuerpo ────────────────────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Indicación
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF0F4FF),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: const Color(0xFF1565C0).withValues(alpha: 0.2),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.info_outline_rounded,
+                          size: 16,
+                          color: const Color(0xFF1565C0).withValues(alpha: 0.7),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Selecciona el rango de estacionamientos que deseas visualizar.',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.grey.shade700,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // ── Campos Desde / Hasta ────────────────────────────
+                  Row(
+                    children: [
+                      // Desde
+                      Expanded(
+                        child: TextField(
+                          controller: desdeController,
+                          keyboardType: TextInputType.number,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.digitsOnly,
+                          ],
+                          decoration: InputDecoration(
+                            labelText: "Desde",
+                            hintText: "1",
+                            prefixIcon: const Icon(Icons.exposure_zero_rounded),
+                            filled: true,
+                            fillColor: Colors.grey.shade50,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(
+                                color: Colors.grey.shade300,
+                              ),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: const BorderSide(
+                                color: Color(0xFF0A1628),
+                                width: 2,
+                              ),
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              vertical: 14,
+                              horizontal: 16,
+                            ),
+                          ),
+                          onChanged: (_) {
+                            // Forzar rebuild para actualizar preview
+                            (context as Element).markNeedsBuild();
+                          },
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: Icon(
+                          Icons.arrow_forward_rounded,
+                          color: Colors.grey.shade400,
+                          size: 22,
+                        ),
+                      ),
+                      // Hasta
+                      Expanded(
+                        child: TextField(
+                          controller: hastaController,
+                          keyboardType: TextInputType.number,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.digitsOnly,
+                          ],
+                          decoration: InputDecoration(
+                            labelText: "Hasta",
+                            hintText: "10",
+                            prefixIcon: const Icon(Icons.numbers_rounded),
+                            filled: true,
+                            fillColor: Colors.grey.shade50,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(
+                                color: Colors.grey.shade300,
+                              ),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: const BorderSide(
+                                color: Color(0xFF0A1628),
+                                width: 2,
+                              ),
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              vertical: 14,
+                              horizontal: 16,
+                            ),
+                          ),
+                          onChanged: (_) {
+                            (context as Element).markNeedsBuild();
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+
+                  // ── Preview del rango ────────────────────────────────
+                  Builder(
+                    builder: (previewContext) {
+                      final d = int.tryParse(desdeController.text);
+                      final h = int.tryParse(hastaController.text);
+                      final valido = d != null && h != null && d <= h && d > 0;
+                      return Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: valido
+                              ? const Color(0xFF2E7D32).withValues(alpha: 0.08)
+                              : Colors.red.shade50,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: valido
+                                ? const Color(0xFF2E7D32).withValues(alpha: 0.3)
+                                : Colors.red.shade200,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              valido
+                                  ? Icons.check_circle_rounded
+                                  : Icons.warning_rounded,
+                              size: 18,
+                              color: valido
+                                  ? const Color(0xFF2E7D32)
+                                  : Colors.red.shade700,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                valido
+                                    ? 'Mostrando espacios del $d al $h'
+                                    : d != null && h != null && d > h
+                                    ? 'El valor "Desde" debe ser menor o igual a "Hasta"'
+                                    : 'Ingresa valores numéricos válidos',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: valido
+                                      ? const Color(0xFF2E7D32)
+                                      : Colors.red.shade700,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 20),
+                ],
+              ),
+            ),
+
+            // ── Botones ───────────────────────────────────────────────
+            Container(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.05),
+                    blurRadius: 10,
+                    offset: const Offset(0, -4),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  if (_rangoEstacionamientos.isNotEmpty) ...[
+                    Expanded(
+                      child: OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.red.shade700,
+                          side: BorderSide(color: Colors.red.shade300),
+                          padding: const EdgeInsets.symmetric(vertical: 13),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        onPressed: () {
+                          _limpiarRango();
+                          Navigator.pop(context);
+                        },
+                        child: const Text(
+                          'Limpiar',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                  ],
+                  Expanded(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF0A1628), Color(0xFF1565C0)],
+                          begin: Alignment.centerLeft,
+                          end: Alignment.centerRight,
+                        ),
+                      ),
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.transparent,
+                          shadowColor: Colors.transparent,
+                          padding: const EdgeInsets.symmetric(vertical: 13),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        onPressed: () {
+                          final d = int.tryParse(desdeController.text);
+                          final h = int.tryParse(hastaController.text);
+                          if (d != null &&
+                              h != null &&
+                              d > 0 &&
+                              h > 0 &&
+                              d <= h) {
+                            final nuevoRango = '$d-$h';
+                            setState(() {
+                              _rangoEstacionamientos = nuevoRango;
+                              _rangoController.text = nuevoRango;
+                            });
+                            _guardarRangoPreferencias(nuevoRango);
+                            _aplicarRangoEstacionamientos();
+                            Navigator.pop(context);
+                          } else {
+                            _showCustomSnackBar(
+                              'Ingresa un rango válido (Desde ≤ Hasta)',
+                              isError: true,
+                            );
+                          }
+                        },
+                        child: const Text(
+                          'Aplicar',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-            },
-            child: Text(
-              "Cancelar",
-              style: TextStyle(fontSize: size.width * 0.04),
-            ),
-          ),
-          if (_rangoEstacionamientos.isNotEmpty)
-            TextButton(
-              onPressed: () {
-                _limpiarRango();
-                Navigator.pop(context);
-              },
-              child: Text(
-                "Limpiar",
-                style: TextStyle(
-                  fontSize: size.width * 0.04,
-                  color: Colors.red,
-                ),
-              ),
-            ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: primaryColor,
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () {
-              final nuevoRango = rangoDialogController.text.trim();
-              if (nuevoRango.isNotEmpty) {
-                setState(() {
-                  _rangoEstacionamientos = nuevoRango;
-                  _rangoController.text = nuevoRango;
-                });
-                _guardarRangoPreferencias(nuevoRango);
-                _aplicarRangoEstacionamientos();
-              }
-              Navigator.pop(context);
-            },
-            child: Text(
-              "Aplicar",
-              style: TextStyle(fontSize: size.width * 0.04),
-            ),
-          ),
-        ],
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       ),
     );
   }
@@ -3862,7 +4151,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
 
 // ---------------------------------------------------------------------------
 // Widget autocontenido para el contador regresivo de cada estacionamiento.
-// Tiene su propio Timer de 1 segundo → solo se reconstruye él mismo,
+// Tiene su propio Timer de 1 segundo ->  solo se reconstruye él mismo,
 // NO la pantalla completa, eliminando el jank de la versión anterior.
 // ---------------------------------------------------------------------------
 class _CountdownTicker extends StatefulWidget {
@@ -3872,6 +4161,7 @@ class _CountdownTicker extends StatefulWidget {
   final VoidCallback onExpired;
 
   const _CountdownTicker({
+    super.key,
     required this.horaSalida,
     required this.fecha,
     required this.tiempoTotalMinutos,

@@ -1,5 +1,9 @@
 import 'package:estacionamientotarifado/login_screan.dart';
+import 'package:estacionamientotarifado/screens/actualizacion_forzada_screen.dart';
+import 'package:estacionamientotarifado/servicios/servicioActualizacionForzada.dart';
+import 'package:estacionamientotarifado/shared/widgets/fondo_decorado_app.dart';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'home_screen.dart';
@@ -38,14 +42,42 @@ class _SplashScreenState extends State<SplashScreen>
 
     _ctrl.forward();
 
-    _checkLoginStatus();
+    _iniciarVerificacion();
+  }
+
+  /// Inicia la verificación de actualización y luego el login
+  Future<void> _iniciarVerificacion() async {
+    // Verificar si hay actualización forzada
+    final resultado = await ServicioActualizacionForzada.verificar();
+
+    if (!mounted) return;
+
+    // Si hay actualización forzada, mostrar pantalla de actualización
+    if (resultado != null &&
+        resultado.hayActualizacion &&
+        resultado.esForzada) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => ActualizacionForzadaScreen(
+            versionDisponible: resultado.versionDisponible,
+            urlPlayStore: resultado.urlPlayStore,
+            mensaje: resultado.mensaje,
+          ),
+        ),
+      );
+      return;
+    }
+
+    // Continuar con el flujo normal de login
+    await _checkLoginStatus();
   }
 
   Future<void> _checkLoginStatus() async {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('token');
 
-    await Future.delayed(const Duration(seconds: 2)); // Simula carga inicial
+    await Future.delayed(const Duration(seconds: 1)); // Carga inicial
 
     if (!mounted) return;
 
@@ -70,108 +102,98 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   Widget build(BuildContext context) {
-    final size = MediaQuery.of(context).size;
-    final shortestSide = size.shortestSide;
+    final shortestSide = MediaQuery.of(context).size.shortestSide;
     final isTabletLike = shortestSide > 600;
 
     return Scaffold(
-      body: SafeArea(
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            // Fondo degradado
-            Container(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [Color(0xFF0A1628), Color(0xFF000000)],
-                ),
-              ),
-            ),
-
-            // Formas decorativas
-            Positioned(
-              top: -size.width * .2,
-              left: -size.width * .25,
-              child: Transform.rotate(
-                angle: -0.4,
-                child: Container(
-                  width: size.width * .7,
-                  height: size.width * .7,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.05),
-                    borderRadius: BorderRadius.circular(40),
+      body: FondoDecoradoApp(
+        child: SafeArea(
+          child: Center(
+            child: FadeTransition(
+              opacity: _opacity,
+              child: ScaleTransition(
+                scale: _scale,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 520),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          padding: EdgeInsets.all(isTabletLike ? 28 : 20),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.10),
+                            borderRadius: BorderRadius.circular(28),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.18),
+                            ),
+                          ),
+                          child: Image.asset(
+                            'assets/images/simert.png',
+                            height: isTabletLike ? 170 : 140,
+                          ),
+                        ),
+                        const SizedBox(height: 28),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.16),
+                            ),
+                          ),
+                          child: const Text(
+                            'Sistema Municipal de Estacionamiento',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 0.2,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                        const SizedBox(height: 18),
+                        Text(
+                          'SIMERT',
+                          style: GoogleFonts.outfit(
+                            color: Colors.white,
+                            fontSize: isTabletLike ? 46 : 34,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 1.4,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Control ágil de usuarios, infracciones y tarjetas en una sola experiencia.',
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.88),
+                            fontSize: isTabletLike ? 18 : 14,
+                            height: 1.45,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 30),
+                        const SizedBox(
+                          width: 28,
+                          height: 28,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2.4,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-            Positioned(
-              right: -size.width * .2,
-              bottom: -size.width * .25,
-              child: Transform.rotate(
-                angle: 0.8,
-                child: Container(
-                  width: size.width * .9,
-                  height: size.width * .9,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.04),
-                    borderRadius: BorderRadius.circular(200),
-                  ),
-                ),
-              ),
-            ),
-
-            // Contenido central animado
-            Center(
-              child: FadeTransition(
-                opacity: _opacity,
-                child: ScaleTransition(
-                  scale: _scale,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // Logo (puedes cambiar por Image.asset si tienes logo local)
-                      Container(
-                        padding: EdgeInsets.all(isTabletLike ? 28 : 18),
-                        child: Image.asset(
-                          'assets/images/simert.png',
-                          height: 150,
-                        ),
-                      ),
-                      // Nombre de la app
-                      Text(
-                        'Estacionamiento Tarifado',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: isTabletLike ? 34 : 24,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 0.8,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Gestión ágil y sencilla 🚗',
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.9),
-                          fontSize: isTabletLike ? 18 : 14,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 30),
-
-                      // Indicador de carga
-                      const CircularProgressIndicator(
-                        color: Colors.white,
-                        strokeWidth: 2,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );

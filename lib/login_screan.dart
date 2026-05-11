@@ -3,10 +3,16 @@ import 'package:estacionamientotarifado/consultas/cambiar_contrasena.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:estacionamientotarifado/servicios/httpMonitorizado.dart';
+import 'package:estacionamientotarifado/core/colores.dart';
+import 'package:estacionamientotarifado/shared/widgets/boton_app.dart';
+import 'package:estacionamientotarifado/shared/widgets/campo_texto_app.dart';
+import 'package:estacionamientotarifado/shared/widgets/fondo_decorado_app.dart';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:estacionamientotarifado/servicios/servicioMinimizar.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -142,7 +148,12 @@ class _LoginScreenState extends State<LoginScreen>
         '[Login] guardado — id=${userObj['id']} is_superuser=$isSuperuser token=${drfToken.substring(0, drfToken.length.clamp(0, 10))}...',
       );
 
+      // Enviar token al servicio nativo para que pueda consultar la API
+      // aunque la app Flutter se cierre (ServicioPersistente.kt)
+      unawaited(ServicioMinimizar.enviarTokenAlServicioNatvio());
+
       final mustChange = prefs.getBool('must_change_password') ?? false;
+
       if (mustChange) {
         await prefs.remove('must_change_password');
         if (!mounted) return;
@@ -270,7 +281,7 @@ class _LoginScreenState extends State<LoginScreen>
         title: const Text(
           'Recuperar contraseña',
           style: TextStyle(
-            color: Color(0xFF0A1628),
+            color: AppColores.primario,
             fontWeight: FontWeight.bold,
           ),
         ),
@@ -279,7 +290,7 @@ class _LoginScreenState extends State<LoginScreen>
           children: [
             const Text(
               'Ingresa tu nombre de usuario. Se generará una contraseña temporal de 6 dígitos.',
-              style: TextStyle(fontSize: 13, color: Colors.black54),
+              style: TextStyle(fontSize: 13, color: AppColores.textoSecundario),
             ),
             const SizedBox(height: 16),
             TextField(
@@ -303,8 +314,8 @@ class _LoginScreenState extends State<LoginScreen>
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF0A1628),
-              foregroundColor: Colors.white,
+              backgroundColor: AppColores.primario,
+              foregroundColor: AppColores.sobrePrimario,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(8),
               ),
@@ -347,12 +358,12 @@ class _LoginScreenState extends State<LoginScreen>
             ),
             title: const Row(
               children: [
-                Icon(Icons.lock_reset_rounded, color: Color(0xFF0A1628)),
+                Icon(Icons.lock_reset_rounded, color: AppColores.primario),
                 SizedBox(width: 8),
                 Text(
                   'Contraseña temporal',
                   style: TextStyle(
-                    color: Color(0xFF0A1628),
+                    color: AppColores.primario,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -369,9 +380,9 @@ class _LoginScreenState extends State<LoginScreen>
                     vertical: 16,
                   ),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF0F4FF),
+                    color: AppColores.acentoFondo,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFF1565C0)),
+                    border: Border.all(color: AppColores.acentoAdmin),
                   ),
                   child: Text(
                     nuevaClave,
@@ -379,7 +390,7 @@ class _LoginScreenState extends State<LoginScreen>
                       fontSize: 38,
                       fontWeight: FontWeight.bold,
                       letterSpacing: 10,
-                      color: Color(0xFF0A1628),
+                      color: AppColores.primario,
                     ),
                   ),
                 ),
@@ -387,7 +398,10 @@ class _LoginScreenState extends State<LoginScreen>
                 const Text(
                   'Anota este código. Al iniciar sesión con él deberás cambiar tu contraseña obligatoriamente.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 12, color: Colors.black54),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppColores.textoSecundario,
+                  ),
                 ),
               ],
             ),
@@ -395,8 +409,8 @@ class _LoginScreenState extends State<LoginScreen>
               ElevatedButton(
                 onPressed: () => Navigator.pop(ctx),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF0A1628),
-                  foregroundColor: Colors.white,
+                  backgroundColor: AppColores.primario,
+                  foregroundColor: AppColores.sobrePrimario,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(8),
                   ),
@@ -427,18 +441,21 @@ class _LoginScreenState extends State<LoginScreen>
         children: [
           Icon(
             isError ? Icons.error_outline : Icons.check_circle_outline,
-            color: Colors.white,
+            color: AppColores.sobrePrimario,
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Text(
               message,
-              style: const TextStyle(color: Colors.white, fontSize: 15),
+              style: const TextStyle(
+                color: AppColores.sobrePrimario,
+                fontSize: 15,
+              ),
             ),
           ),
         ],
       ),
-      backgroundColor: isError ? Colors.redAccent : Colors.green,
+      backgroundColor: isError ? AppColores.error : AppColores.exito,
       behavior: SnackBarBehavior.floating,
       margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -451,145 +468,171 @@ class _LoginScreenState extends State<LoginScreen>
 
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    final bool compacta = size.width < 920;
+
     return Scaffold(
-      // Fondo con gradiente como el splash
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFF0A1628), Color(0xFF000000)],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-          ),
-        ),
-        child: FadeTransition(
-          opacity: _fadeAnimation,
-          child: Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 28.0),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  // Logo
-                  Hero(
-                    tag: "appLogo",
-                    child: Image.asset('assets/images/simert.png', width: 250),
-                  ),
-                  Text(
-                    "SIMERT - EL GUABO",
-                    style: GoogleFonts.poppins(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                      shadows: [
-                        Shadow(
-                          blurRadius: 8,
-                          color: Colors.black26,
-                          offset: Offset(2, 2),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 40),
-
-                  // Campo usuario
-                  _buildTextField(
-                    controller: _userController,
-                    label: "Usuario",
-                    icon: Icons.person_outline,
-                    obscure: false,
-                  ),
-                  const SizedBox(height: 20),
-
-                  // Campo contraseña
-                  _buildTextField(
-                    controller: _passwordController,
-                    label: "Contraseña",
-                    icon: Icons.lock_outline,
-                    obscure: true,
-                  ),
-                  const SizedBox(height: 12),
-
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton(
-                      onPressed: _olvideMiContrasena,
-                      child: Text(
-                        "¿Olvidaste tu contraseña?",
-                        style: GoogleFonts.poppins(color: Colors.white70),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-
-                  // Botón
-                  SizedBox(
-                    width: double.infinity,
-                    height: 50,
-                    child: ElevatedButton(
-                      onPressed: _isLoading ? null : _login,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        foregroundColor: const Color(0xFF0066FF),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                        elevation: 6,
-                        shadowColor: Colors.black45,
-                      ),
-                      child: _isLoading
-                          ? const CircularProgressIndicator(
-                              color: Color(0xFF0066FF),
-                            )
-                          : Text(
-                              "Iniciar sesión",
-                              style: GoogleFonts.poppins(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
+      body: FondoDecoradoApp(
+        child: SafeArea(
+          child: FadeTransition(
+            opacity: _fadeAnimation,
+            child: Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 18,
+                ),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1080),
+                  child: Wrap(
+                    alignment: WrapAlignment.center,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 28,
+                    runSpacing: 28,
+                    children: [
+                      SizedBox(
+                        width: size.width > 840 ? 420 : 520,
+                        child: Column(
+                          crossAxisAlignment: compacta
+                              ? CrossAxisAlignment.center
+                              : CrossAxisAlignment.start,
+                          children: [
+                            Hero(
+                              tag: 'appLogo',
+                              child: Image.asset(
+                                'assets/images/simert.png',
+                                width: compacta ? 180 : 220,
                               ),
                             ),
-                    ),
+                            const SizedBox(height: 16),
+                            Text(
+                              'SIMERT - EL GUABO',
+                              textAlign: compacta
+                                  ? TextAlign.center
+                                  : TextAlign.left,
+                              style: GoogleFonts.outfit(
+                                fontSize: compacta ? 30 : 34,
+                                fontWeight: FontWeight.w800,
+                                color: AppColores.sobrePrimario,
+                                height: 1.05,
+                                letterSpacing: 0.8,
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            Text(
+                              'Accede con tu cuenta institucional.',
+                              textAlign: compacta
+                                  ? TextAlign.center
+                                  : TextAlign.left,
+                              style: GoogleFonts.poppins(
+                                fontSize: 14,
+                                height: 1.4,
+                                color: Colors.white.withValues(alpha: 0.82),
+                              ),
+                            ),
+                            if (!compacta) const SizedBox(height: 6),
+                          ],
+                        ),
+                      ),
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 460),
+                        child: Container(
+                          padding: const EdgeInsets.all(24),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(28),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.20),
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.14),
+                                blurRadius: 30,
+                                offset: const Offset(0, 20),
+                              ),
+                            ],
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Iniciar sesión',
+                                style: GoogleFonts.outfit(
+                                  color: Colors.white,
+                                  fontSize: 26,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 18),
+                              CampoTextoApp(
+                                controller: _userController,
+                                etiqueta: 'Usuario',
+                                icono: Icons.person_outline,
+                                accionTeclado: TextInputAction.next,
+                                onAccion: () =>
+                                    FocusScope.of(context).nextFocus(),
+                                floatingLabelBehavior:
+                                    FloatingLabelBehavior.never,
+                                colorFondo: Colors.white,
+                                colorTexto: AppColores.primario,
+                                colorIcono: AppColores.primarioSuave,
+                                colorEtiqueta: AppColores.primarioSuave,
+                              ),
+                              const SizedBox(height: 16),
+                              CampoTextoApp(
+                                controller: _passwordController,
+                                etiqueta: 'Contraseña',
+                                icono: Icons.lock_outline,
+                                esContrasena: true,
+                                mostrarContrasena: !_obscurePassword,
+                                accionTeclado: TextInputAction.done,
+                                onAccion: _login,
+                                floatingLabelBehavior:
+                                    FloatingLabelBehavior.never,
+                                colorFondo: Colors.white,
+                                colorTexto: AppColores.primario,
+                                colorIcono: AppColores.primarioSuave,
+                                colorEtiqueta: AppColores.primarioSuave,
+                                onToggleContrasena: () {
+                                  setState(
+                                    () => _obscurePassword = !_obscurePassword,
+                                  );
+                                },
+                              ),
+                              const SizedBox(height: 8),
+                              Align(
+                                alignment: Alignment.centerRight,
+                                child: TextButton(
+                                  onPressed: _olvideMiContrasena,
+                                  child: Text(
+                                    'Recuperar contraseña',
+                                    style: GoogleFonts.poppins(
+                                      color: Colors.white.withValues(
+                                        alpha: 0.82,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              BotonApp(
+                                texto: 'Entrar al panel',
+                                onPressed: _login,
+                                cargando: _isLoading,
+                                ancho: double.infinity,
+                                tamano: TamanoBoton.grande,
+                                iconoIzquierda: Icons.login_rounded,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
             ),
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTextField({
-    required TextEditingController controller,
-    required String label,
-    required IconData icon,
-    required bool obscure,
-  }) {
-    return TextField(
-      controller: controller,
-      obscureText: obscure && _obscurePassword,
-      style: const TextStyle(color: Colors.white),
-      decoration: InputDecoration(
-        filled: true,
-        fillColor: Colors.white.withOpacity(0.15),
-        labelText: label,
-        labelStyle: const TextStyle(color: Colors.white),
-        prefixIcon: Icon(icon, color: Colors.white),
-        suffixIcon: obscure
-            ? IconButton(
-                icon: Icon(
-                  _obscurePassword ? Icons.visibility_off : Icons.visibility,
-                  color: Colors.white70,
-                ),
-                onPressed: () {
-                  setState(() {
-                    _obscurePassword = !_obscurePassword;
-                  });
-                },
-              )
-            : null,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: BorderSide.none,
         ),
       ),
     );

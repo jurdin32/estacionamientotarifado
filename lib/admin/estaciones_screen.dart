@@ -1,10 +1,17 @@
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:estacionamientotarifado/servicios/httpMonitorizado.dart';
-import 'package:estacionamientotarifado/servicios/servicioWebSocket.dart';
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:estacionamientotarifado/core/colores.dart';
+import 'package:estacionamientotarifado/shared/widgets/campo_busqueda_app.dart';
+import 'package:estacionamientotarifado/shared/widgets/encabezado_modulo_app.dart';
+import 'package:estacionamientotarifado/shared/widgets/estado_carga_app.dart';
+import 'package:estacionamientotarifado/shared/widgets/tarjeta_lista_app.dart';
+import 'package:estacionamientotarifado/servicios/httpMonitorizado.dart';
+import 'package:estacionamientotarifado/servicios/servicioWebSocket.dart';
+import 'package:estacionamientotarifado/tarjetas/models/Tarjetas.dart';
 
 const String _kBaseUrl = 'https://simert.transitoelguabo.gob.ec/api/estacion/';
 const String _kCacheKey = 'cache_admin_estaciones';
@@ -79,6 +86,7 @@ class _EstacionesAdminScreenState extends State<EstacionesAdminScreen> {
   final TextEditingController _searchCtrl = TextEditingController();
 
   bool _isLoading = false;
+  // ignore: unused_field
   final bool _cargandoSilencioso = false;
   String? _errorMessage;
   List<Map<String, dynamic>> _todas = [];
@@ -87,6 +95,7 @@ class _EstacionesAdminScreenState extends State<EstacionesAdminScreen> {
   String? _token;
   String _sessionCookie = '';
   StreamSubscription? _wsEstSub;
+  Timer? _barridoExpiradasTimer;
 
   List<Map<String, dynamic>> get _filtradas {
     final q = _searchCtrl.text.trim().toLowerCase();
@@ -118,11 +127,17 @@ class _EstacionesAdminScreenState extends State<EstacionesAdminScreen> {
     _searchCtrl.addListener(() => setState(() {}));
     _init();
     _suscribirWsEstaciones();
+    // Timer para liberar estacionamientos expirados cada 60 segundos
+    _barridoExpiradasTimer = Timer.periodic(
+      const Duration(seconds: 60),
+      (_) => _verificarYLiberarExpirados(),
+    );
   }
 
   @override
   void dispose() {
     _wsEstSub?.cancel();
+    _barridoExpiradasTimer?.cancel();
     _searchCtrl.dispose();
     super.dispose();
   }
@@ -244,6 +259,116 @@ class _EstacionesAdminScreenState extends State<EstacionesAdminScreen> {
   }
 
   Future<void> _refrescarSilencioso() => _fetchEstaciones(silencioso: true);
+
+  /// Verifica estacionamientos expirados en el caché local y los libera.
+  /// Luego refresca los datos desde el servidor para sincronizar.
+  Future<void> _verificarYLiberarExpirados() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final jsonString = prefs.getString('estacionamientos_tarjeta');
+      if (jsonString == null || jsonString.isEmpty) return;
+
+      final List<dynamic> jsonData = json.decode(jsonString);
+      final List<Estacionamiento_Tarjeta> tarjetas = jsonData
+          .map(
+            (item) =>
+                Estacionamiento_Tarjeta.fromJson(item as Map<String, dynamic>),
+          )
+          .toList();
+
+      if (tarjetas.isEmpty) return;
+
+      final ahora = DateTime.now();
+      final List<int> idsLiberados = [];
+
+      for (final tarjeta in tarjetas) {
+        if (tarjeta.estacionId <= 0) continue;
+        try {
+          final minutosRestantes = _calcularMinutosRestantes(tarjeta, ahora);
+          if (minutosRestantes != null && minutosRestantes <= 0) {
+            idsLiberados.add(tarjeta.estacionId);
+          }
+        } catch (_) {}
+      }
+
+      if (idsLiberados.isEmpty) return;
+
+      debugPrint(
+        '🧹 Admin: liberando ${idsLiberados.length} estacionamientos localmente',
+      );
+
+      // Eliminar tarjetas expiradas del caché
+      final tarjetasActualizadas = tarjetas
+          .where((t) => !idsLiberados.contains(t.estacionId))
+          .toList();
+      await prefs.setString(
+        'estacionamientos_tarjeta',
+        json.encode(tarjetasActualizadas.map((t) => t.toJson()).toList()),
+      );
+
+      // Actualizar caché de estacionamientos
+      final estacionesJson = prefs.getString('estacionamientos');
+      if (estacionesJson != null) {
+        final List<dynamic> estacionesData = json.decode(estacionesJson);
+        bool huboCambio = false;
+        for (final est in estacionesData) {
+          if (idsLiberados.contains(est['id']) && est['estado'] == true) {
+            est['estado'] = false;
+            est['placa'] = '';
+            huboCambio = true;
+          }
+        }
+        if (huboCambio) {
+          await prefs.setString(
+            'estacionamientos',
+            json.encode(estacionesData),
+          );
+        }
+      }
+
+      debugPrint('✅ Admin: ${idsLiberados.length} liberados localmente');
+    } catch (e) {
+      debugPrint('❌ Admin: error liberando expirados: $e');
+    }
+
+    // Refrescar desde el servidor
+    await _refrescarSilencioso();
+  }
+
+  /// Calcula los minutos restantes de una tarjeta respecto a la hora actual.
+  int? _calcularMinutosRestantes(
+    Estacionamiento_Tarjeta tarjeta,
+    DateTime ahora,
+  ) {
+    try {
+      final horaEntrada = DateFormat('HH:mm').parse(tarjeta.horaEntrada);
+      final horaSalida = DateFormat('HH:mm').parse(tarjeta.horaSalida);
+
+      final entradaHoy = DateTime(
+        ahora.year,
+        ahora.month,
+        ahora.day,
+        horaEntrada.hour,
+        horaEntrada.minute,
+      );
+      final salidaHoy = DateTime(
+        ahora.year,
+        ahora.month,
+        ahora.day,
+        horaSalida.hour,
+        horaSalida.minute,
+      );
+
+      if (salidaHoy.isBefore(entradaHoy)) {
+        final salidaManana = salidaHoy.add(const Duration(days: 1));
+        return salidaManana.difference(ahora).inMinutes;
+      } else {
+        return salidaHoy.difference(ahora).inMinutes;
+      }
+    } catch (e) {
+      return null;
+    }
+  }
 
   // ── Crear rango de estaciones ────────────────────────────────────────────
   Future<void> _crearRango({
@@ -456,11 +581,7 @@ class _EstacionesAdminScreenState extends State<EstacionesAdminScreen> {
               width: double.infinity,
               padding: const EdgeInsets.all(20),
               decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFF0A1628), Color(0xFF000000)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
+                gradient: AppColores.gradientePrincipal,
               ),
               child: const Row(
                 children: [
@@ -525,11 +646,7 @@ class _EstacionesAdminScreenState extends State<EstacionesAdminScreen> {
         systemOverlayStyle: SystemUiOverlayStyle.light,
         flexibleSpace: Container(
           decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              colors: [Color(0xFF0A1628), Color(0xFF000000)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
+            gradient: AppColores.gradientePrincipal,
           ),
         ),
         actions: [
@@ -560,7 +677,6 @@ class _EstacionesAdminScreenState extends State<EstacionesAdminScreen> {
   }
 
   Widget _buildSearchPanel() {
-    final size = MediaQuery.of(context).size;
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -574,86 +690,22 @@ class _EstacionesAdminScreenState extends State<EstacionesAdminScreen> {
       ),
       child: Column(
         children: [
-          // Banda identidad
-          Container(
-            width: double.infinity,
-            padding: EdgeInsets.fromLTRB(
-              size.width * 0.04,
-              size.width * 0.04,
-              size.width * 0.04,
-              size.width * 0.03,
-            ),
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFF0A1628), Color(0xFF000000)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  padding: EdgeInsets.all(size.width * 0.025),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.2),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    Icons.local_parking_rounded,
-                    color: Colors.white,
-                    size: size.width * 0.055,
-                  ),
-                ),
-                SizedBox(width: size.width * 0.03),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'SIMERT',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: size.width * 0.045,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    Text(
-                      'Administración de Estacionamientos',
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.85),
-                        fontSize: size.width * 0.03,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
+          const EncabezadoModuloApp(
+            icono: Icons.local_parking_rounded,
+            subtitulo: 'Administración de Estacionamientos',
+            gradiente: AppColores.gradientePrincipal,
           ),
           // Buscador
           Padding(
-            padding: EdgeInsets.all(size.width * 0.04),
-            child: TextField(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+            child: CampoBusquedaApp(
               controller: _searchCtrl,
-              decoration: InputDecoration(
-                labelText: 'Buscar estacionamiento',
-                hintText: 'N°, dirección, placa…',
-                prefixIcon: const Icon(Icons.search_rounded, color: _primary),
-                suffixIcon: _searchCtrl.text.isNotEmpty
-                    ? IconButton(
-                        icon: Icon(Icons.clear, color: Colors.grey[500]),
-                        onPressed: () => _searchCtrl.clear(),
-                      )
-                    : null,
-                filled: true,
-                fillColor: Colors.grey.shade50,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
-                ),
-                contentPadding: const EdgeInsets.symmetric(
-                  vertical: 14,
-                  horizontal: 16,
-                ),
-              ),
+              labelText: 'Buscar estacionamiento',
+              hintText: 'N°, dirección, placa…',
+              filledColor: Colors.grey.shade50,
+              onSearch: () => FocusScope.of(context).unfocus(),
+              onChanged: (_) => setState(() {}),
+              onClear: () => setState(() {}),
             ),
           ),
         ],
@@ -766,147 +818,117 @@ class _EstacionesAdminScreenState extends State<EstacionesAdminScreen> {
         ? 'OCUPADO'
         : 'DISPONIBLE';
 
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: 5),
-      elevation: 2,
-      shadowColor: colorEstado.withValues(alpha: 0.2),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
-        side: BorderSide(
-          color: ocupado || esReservado
-              ? colorEstado.withValues(alpha: 0.4)
-              : Colors.grey.shade200,
-          width: ocupado || esReservado ? 1.5 : 1,
+    return TarjetaListaApp(
+      colorAcento: colorEstado,
+      onTap: () => _abrirFormulario(estacion: e),
+      avatar: Container(
+        width: 42,
+        height: 42,
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.2),
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white.withValues(alpha: 0.6)),
         ),
-      ),
-      color: Colors.white,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: () => _abrirFormulario(estacion: e),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Row(
-            children: [
-              // Avatar con número
-              CircleAvatar(
-                radius: 24,
-                backgroundColor: colorEstado.withValues(alpha: 0.12),
-                child: Text(
-                  '#$numero',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: numero.length > 3 ? 10 : 12,
-                    color: colorEstado,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 14),
-              // Datos
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Espacio #$numero',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                        color: _primary,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    if (direccion.isNotEmpty)
-                      Text(
-                        direccion,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey.shade600,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 7,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: colorEstado.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                              color: colorEstado.withValues(alpha: 0.4),
-                            ),
-                          ),
-                          child: Text(
-                            labelEstado,
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w600,
-                              color: colorEstado,
-                            ),
-                          ),
-                        ),
-                        if (ocupado && placa.isNotEmpty && !esReservado) ...[
-                          const SizedBox(width: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 7,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.grey.shade800,
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text(
-                              placa,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 10,
-                                letterSpacing: 1,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              // Acciones
-              Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  GestureDetector(
-                    onTap: () => _confirmarEliminar(e),
-                    child: Container(
-                      padding: const EdgeInsets.all(7),
-                      decoration: BoxDecoration(
-                        color: Colors.red.shade50,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.red.shade200),
-                      ),
-                      child: Icon(
-                        Icons.delete_outline_rounded,
-                        size: 18,
-                        color: Colors.red.shade600,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  const Icon(
-                    Icons.chevron_right_rounded,
-                    color: Colors.grey,
-                    size: 20,
-                  ),
-                ],
-              ),
-            ],
+        child: Center(
+          child: Text(
+            '#$numero',
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w800,
+              fontSize: 11,
+            ),
           ),
         ),
+      ),
+      titulo: 'Espacio #$numero',
+      subtitulo: direccion,
+      encabezadoDerecha: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Icon(
+          esReservado
+              ? Icons.lock_rounded
+              : ocupado
+              ? Icons.block_rounded
+              : Icons.check_circle_rounded,
+          size: 14,
+          color: colorEstado,
+        ),
+      ),
+      cuerpo: Row(
+        children: [
+          Expanded(
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: colorEstado.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: colorEstado.withValues(alpha: 0.35),
+                    ),
+                  ),
+                  child: Text(
+                    labelEstado,
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: colorEstado,
+                    ),
+                  ),
+                ),
+                if (ocupado && placa.isNotEmpty && !esReservado)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade800,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      placa,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 10,
+                        letterSpacing: 0.6,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          GestureDetector(
+            onTap: () => _confirmarEliminar(e),
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.red.shade50,
+                borderRadius: BorderRadius.circular(9),
+                border: Border.all(color: Colors.red.shade200),
+              ),
+              child: Icon(
+                Icons.delete_outline_rounded,
+                size: 18,
+                color: Colors.red.shade600,
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          const Icon(Icons.chevron_right_rounded, color: Colors.grey, size: 20),
+        ],
       ),
     );
   }
@@ -954,38 +976,11 @@ class _EstacionesAdminScreenState extends State<EstacionesAdminScreen> {
   }
 
   Widget _buildLoadingState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(24),
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(colors: [_primary, _accent]),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.local_parking_rounded,
-              size: 40,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 20),
-          const CircularProgressIndicator(
-            valueColor: AlwaysStoppedAnimation<Color>(_primary),
-            strokeWidth: 3,
-          ),
-          const SizedBox(height: 14),
-          Text(
-            'Cargando estacionamientos…',
-            style: TextStyle(
-              fontSize: 15,
-              color: Colors.grey[600],
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
-      ),
+    return const EstadoCargaApp(
+      icono: Icons.local_parking_rounded,
+      mensaje: 'Cargando estacionamientos…',
+      colorInicio: _primary,
+      colorFin: _accent,
     );
   }
 
@@ -1328,7 +1323,7 @@ class _FormularioEstacionState extends State<_FormularioEstacion> {
                           ),
                           Switch.adaptive(
                             value: _estado,
-                            activeColor: _accent,
+                            activeThumbColor: _accent,
                             onChanged: (v) => setState(() => _estado = v),
                           ),
                         ],
@@ -1731,7 +1726,7 @@ class _FormularioRangoState extends State<_FormularioRango> {
                           ),
                           Switch.adaptive(
                             value: _estado,
-                            activeColor: _accent,
+                            activeThumbColor: _accent,
                             onChanged: (v) => setState(() => _estado = v),
                           ),
                         ],

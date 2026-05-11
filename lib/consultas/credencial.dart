@@ -1,5 +1,7 @@
 import 'dart:math';
 
+import 'package:estacionamientotarifado/core/colores.dart';
+import 'package:estacionamientotarifado/shared/widgets/estado_carga_app.dart';
 import 'package:flutter/material.dart';
 import 'package:estacionamientotarifado/servicios/httpMonitorizado.dart';
 import 'dart:convert';
@@ -170,11 +172,7 @@ class _DynamicCredentialScreenState extends State<DynamicCredentialScreen> {
               width: double.infinity,
               padding: const EdgeInsets.all(20),
               decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFF0A1628), Color(0xFF000000)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
+                gradient: AppColores.gradientePrincipal,
               ),
               child: const Row(
                 children: [
@@ -235,7 +233,7 @@ class _DynamicCredentialScreenState extends State<DynamicCredentialScreen> {
     final nameLines = _splitNameIntoTwoLines(nombreLinea1);
 
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: AppColores.fondo,
       appBar: AppBar(
         centerTitle: true,
         title: const Text(
@@ -246,11 +244,7 @@ class _DynamicCredentialScreenState extends State<DynamicCredentialScreen> {
         elevation: 0,
         flexibleSpace: Container(
           decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              colors: [Color(0xFF0A1628), Color(0xFF000000)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
+            gradient: AppColores.gradientePrincipal,
           ),
         ),
         actions: [
@@ -267,15 +261,9 @@ class _DynamicCredentialScreenState extends State<DynamicCredentialScreen> {
         ],
       ),
       body: _isLoading
-          ? const Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  CircularProgressIndicator(color: Color(0xFF1565C0)),
-                  SizedBox(height: 16),
-                  Text('Cargando datos...'),
-                ],
-              ),
+          ? const EstadoCargaApp(
+              icono: Icons.badge_rounded,
+              mensaje: 'Cargando datos...',
             )
           : _hasError
           ? Center(
@@ -287,7 +275,7 @@ class _DynamicCredentialScreenState extends State<DynamicCredentialScreen> {
                     const Icon(
                       Icons.error_outline,
                       size: 64,
-                      color: Color(0xFF0A1628),
+                      color: AppColores.primario,
                     ),
                     const SizedBox(height: 16),
                     const Text(
@@ -295,7 +283,7 @@ class _DynamicCredentialScreenState extends State<DynamicCredentialScreen> {
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
-                        color: Color(0xFF0A1628),
+                        color: AppColores.primario,
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -304,7 +292,7 @@ class _DynamicCredentialScreenState extends State<DynamicCredentialScreen> {
                     ElevatedButton(
                       onPressed: _refreshData,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF1565C0),
+                        backgroundColor: AppColores.acentoAdmin,
                         foregroundColor: Colors.white,
                       ),
                       child: const Text('Reintentar'),
@@ -332,13 +320,13 @@ class _DynamicCredentialScreenState extends State<DynamicCredentialScreen> {
                       const Icon(
                         Icons.touch_app_rounded,
                         size: 14,
-                        color: Color(0xFF1565C0),
+                        color: AppColores.acentoAdmin,
                       ),
                       const SizedBox(width: 5),
                       const Text(
                         'Toca la tarjeta para voltear',
                         style: TextStyle(
-                          color: Color(0xFF1565C0),
+                          color: AppColores.acentoAdmin,
                           fontSize: 12,
                           fontWeight: FontWeight.w500,
                         ),

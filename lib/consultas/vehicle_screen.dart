@@ -1,6 +1,10 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:estacionamientotarifado/servicios/httpMonitorizado.dart';
+import 'package:estacionamientotarifado/core/colores.dart';
+import 'package:estacionamientotarifado/shared/widgets/campo_busqueda_app.dart';
+import 'package:estacionamientotarifado/shared/widgets/encabezado_modulo_app.dart';
+import 'package:estacionamientotarifado/shared/widgets/estado_carga_app.dart';
 import 'dart:convert';
 
 class VehicleScreen extends StatefulWidget {
@@ -12,12 +16,12 @@ class VehicleScreen extends StatefulWidget {
 
 class _VehicleScreenState extends State<VehicleScreen> {
   // --- Design tokens --------------------------------------------------------
-  static const Color _colorPrimario = Color(0xFF0A1628);
-  static const Color _colorSecundario = Color(0xFF1565C0);
-  static const Color _colorFondo = Color(0xFFF0F4FF);
-  static const Color _colorBorde = Color(0xFFE0E0E0);
-  static const Color _colorTexto = Color(0xFF333333);
-  static const Color _colorSubtexto = Color(0xFF555555);
+  static const Color _colorPrimario = AppColores.primario;
+  static const Color _colorSecundario = AppColores.acentoAdmin;
+  static const Color _colorFondo = AppColores.acentoFondo;
+  static const Color _colorBorde = AppColores.borde;
+  static const Color _colorTexto = AppColores.textoPrimario;
+  static const Color _colorSubtexto = AppColores.textoSecundario;
 
   // --- State ----------------------------------------------------------------
   final TextEditingController _plateController = TextEditingController();
@@ -100,11 +104,7 @@ class _VehicleScreenState extends State<VehicleScreen> {
               width: double.infinity,
               padding: const EdgeInsets.all(20),
               decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFF0A1628), Color(0xFF000000)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
+                gradient: AppColores.gradientePrincipal,
               ),
               child: const Row(
                 children: [
@@ -133,7 +133,10 @@ class _VehicleScreenState extends State<VehicleScreen> {
                   const SizedBox(height: 12),
                   Text(
                     'Permite consultar los datos completos de un vehículo registrado en el sistema SIMERT mediante su número de placa.',
-                    style: TextStyle(color: Colors.grey[700], fontSize: 14),
+                    style: const TextStyle(
+                      color: AppColores.textoSecundario,
+                      fontSize: 14,
+                    ),
                   ),
                   const SizedBox(height: 20),
                   Align(
@@ -206,11 +209,7 @@ class _VehicleScreenState extends State<VehicleScreen> {
       elevation: 0,
       flexibleSpace: Container(
         decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFF0A1628), Color(0xFF000000)],
-          ),
+          gradient: AppColores.gradientePrincipal,
         ),
       ),
       actions: [
@@ -225,7 +224,6 @@ class _VehicleScreenState extends State<VehicleScreen> {
 
   // --- Panel de búsqueda ---------------------------------------------------
   Widget _buildSearchPanel() {
-    final size = MediaQuery.of(context).size;
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -239,163 +237,37 @@ class _VehicleScreenState extends State<VehicleScreen> {
       ),
       child: Column(
         children: [
-          // Banda de encabezado
-          Container(
-            width: double.infinity,
-            padding: EdgeInsets.fromLTRB(
-              size.width * 0.04,
-              size.width * 0.04,
-              size.width * 0.04,
-              size.width * 0.03,
-            ),
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFF0A1628), Color(0xFF000000)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  padding: EdgeInsets.all(size.width * 0.025),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.2),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    Icons.directions_car_outlined,
-                    color: Colors.white,
-                    size: size.width * 0.055,
-                  ),
-                ),
-                SizedBox(width: size.width * 0.03),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'SIMERT',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: size.width * 0.045,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    Text(
-                      'Consulta de Vehículos',
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.85),
-                        fontSize: size.width * 0.03,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
+          const EncabezadoModuloApp(
+            icono: Icons.directions_car_outlined,
+            subtitulo: 'Consulta de Vehículos',
           ),
           // Campo de búsqueda
           Padding(
-            padding: EdgeInsets.all(size.width * 0.04),
-            child: TextField(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+            child: CampoBusquedaApp(
               controller: _plateController,
+              labelText: 'Placa del vehículo',
+              hintText: 'Ej: ABC1234',
+              onSearch: _isLoading ? () {} : _onSearchPressed,
+              filledColor: AppColores.acentoFondo,
+              enabled: !_isLoading,
               textCapitalization: TextCapitalization.characters,
               onChanged: (_) {
                 setState(() {
                   if (_errorMessage != null) _errorMessage = null;
                 });
               },
-              onSubmitted: (_) => _onSearchPressed(),
-              decoration: InputDecoration(
-                labelText: 'Placa del vehículo',
-                hintText: 'Ej: ABC1234',
-                prefixIcon: const Icon(
-                  Icons.directions_car_outlined,
-                  color: _colorPrimario,
-                ),
-                suffixIcon: _plateController.text.isNotEmpty
-                    ? IconButton(
-                        icon: Icon(Icons.clear, color: Colors.grey[500]),
-                        onPressed: () {
-                          _plateController.clear();
-                          setState(() {
-                            _errorMessage = null;
-                            _vehicleData = null;
-                          });
-                        },
-                      )
-                    : null,
-                filled: true,
-                fillColor: Colors.grey.shade50,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
-                ),
-                contentPadding: EdgeInsets.symmetric(
-                  vertical: size.height * 0.015,
-                  horizontal: 16,
-                ),
-              ),
+              onClear: () {
+                setState(() {
+                  _errorMessage = null;
+                  _vehicleData = null;
+                });
+              },
               inputFormatters: [
                 UpperCaseTextFormatter(),
                 LengthLimitingTextInputFormatter(7),
                 FilteringTextInputFormatter.allow(RegExp(r'[A-Z0-9]')),
               ],
-            ),
-          ),
-          // Botón buscar
-          Padding(
-            padding: EdgeInsets.fromLTRB(
-              size.width * 0.04,
-              0,
-              size.width * 0.04,
-              size.width * 0.04,
-            ),
-            child: Container(
-              width: double.infinity,
-              height: 50,
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF0A1628), Color(0xFF000000)],
-                  begin: Alignment.centerLeft,
-                  end: Alignment.centerRight,
-                ),
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFF001F54).withValues(alpha: 0.3),
-                    blurRadius: 8,
-                    offset: const Offset(0, 3),
-                  ),
-                ],
-              ),
-              child: ElevatedButton.icon(
-                onPressed: _isLoading ? null : _onSearchPressed,
-                icon: _isLoading
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : const Icon(Icons.search, size: 20),
-                label: Text(
-                  _isLoading ? 'Buscando…' : 'Buscar',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 15,
-                  ),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.transparent,
-                  foregroundColor: Colors.white,
-                  shadowColor: Colors.transparent,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
             ),
           ),
         ],
@@ -434,7 +306,10 @@ class _VehicleScreenState extends State<VehicleScreen> {
           Text(
             'Ingrese la placa del vehículo para consultar\nsus datos y propietario.',
             textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+            style: const TextStyle(
+              color: AppColores.textoSecundario,
+              fontSize: 13,
+            ),
           ),
         ],
       ),
@@ -446,19 +321,19 @@ class _VehicleScreenState extends State<VehicleScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: Colors.red.shade50,
+        color: AppColores.error.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.red.shade100),
+        border: Border.all(color: AppColores.error.withValues(alpha: 0.2)),
       ),
       child: Row(
         children: [
-          Icon(Icons.error_outline, color: Colors.red.shade500, size: 18),
+          Icon(Icons.error_outline, color: AppColores.error, size: 18),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
               _errorMessage!,
               style: TextStyle(
-                color: Colors.red.shade700,
+                color: AppColores.error,
                 fontSize: 13,
                 fontWeight: FontWeight.w500,
               ),
@@ -471,77 +346,47 @@ class _VehicleScreenState extends State<VehicleScreen> {
 
   // --- Cargando -------------------------------------------------------------
   Widget _buildCargando() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(24),
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [_colorPrimario, _colorSecundario],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.directions_car_rounded,
-              size: 40,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 20),
-          const Text(
-            'SIMERT',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: _colorPrimario,
-              letterSpacing: 1.2,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Consultando vehículo...',
-            style: TextStyle(fontSize: 13, color: Colors.grey[600]),
-          ),
-          const SizedBox(height: 20),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 48),
-            child: LinearProgressIndicator(
-              backgroundColor: Colors.grey.shade200,
-              valueColor: const AlwaysStoppedAnimation<Color>(_colorSecundario),
-              minHeight: 3,
-              borderRadius: BorderRadius.circular(4),
-            ),
-          ),
-        ],
-      ),
+    return const EstadoCargaApp(
+      icono: Icons.directions_car_rounded,
+      mensaje: 'Consultando vehículo...',
+      colorInicio: _colorPrimario,
+      colorFin: _colorSecundario,
     );
   }
 
   // --- Resultado ------------------------------------------------------------
   Widget _buildResultado() {
     final d = _vehicleData!;
+    final estadoRobado = _normalizarEstadoRobado(d['Robado']);
+    final tieneEstadoRobado = estadoRobado != null;
+    final esReportadoRobado = estadoRobado == 'SI';
 
     return Column(
       children: [
-        // -- Alerta de robo --
-        if (_esNoVacio(d['Robado']))
+        // -- Estado de robo --
+        if (tieneEstadoRobado)
           Container(
             margin: const EdgeInsets.only(bottom: 14),
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             decoration: BoxDecoration(
-              color: Colors.red.shade50,
+              color: (esReportadoRobado ? AppColores.error : AppColores.exito)
+                  .withValues(alpha: 0.08),
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.red.shade300, width: 1.5),
+              border: Border.all(
+                color: (esReportadoRobado ? AppColores.error : AppColores.exito)
+                    .withValues(alpha: 0.5),
+                width: 1.5,
+              ),
             ),
             child: Row(
               children: [
                 Icon(
-                  Icons.warning_amber_rounded,
-                  color: Colors.red.shade700,
+                  esReportadoRobado
+                      ? Icons.warning_amber_rounded
+                      : Icons.verified_outlined,
+                  color: esReportadoRobado
+                      ? AppColores.error
+                      : AppColores.exito,
                   size: 22,
                 ),
                 const SizedBox(width: 10),
@@ -550,18 +395,24 @@ class _VehicleScreenState extends State<VehicleScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'VEHÍCULO REPORTADO',
+                        esReportadoRobado
+                            ? 'VEHÍCULO REPORTADO'
+                            : 'VEHÍCULO SIN REPORTE DE ROBO',
                         style: TextStyle(
-                          color: Colors.red.shade800,
+                          color: esReportadoRobado
+                              ? AppColores.error
+                              : AppColores.exito,
                           fontWeight: FontWeight.bold,
                           fontSize: 13,
                         ),
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        d['Robado'].toString(),
+                        'Estado: $estadoRobado',
                         style: TextStyle(
-                          color: Colors.red.shade700,
+                          color: esReportadoRobado
+                              ? AppColores.error
+                              : AppColores.exito,
                           fontSize: 12,
                         ),
                       ),
@@ -640,6 +491,8 @@ class _VehicleScreenState extends State<VehicleScreen> {
               'Avalúo Comercial',
               d['AvaluoComercial'],
             ),
+            if (tieneEstadoRobado)
+              _rowData(Icons.gpp_maybe_outlined, 'Estado Robo', estadoRobado),
           ],
         ),
         const SizedBox(height: 14),
@@ -701,11 +554,7 @@ class _VehicleScreenState extends State<VehicleScreen> {
     return Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(14),
-        gradient: const LinearGradient(
-          colors: [Color(0xFF0A1628), Color(0xFF000000)],
-          begin: Alignment.centerLeft,
-          end: Alignment.centerRight,
-        ),
+        gradient: AppColores.gradientePrincipal,
         boxShadow: [
           BoxShadow(
             color: _colorPrimario.withValues(alpha: 0.30),
@@ -912,6 +761,25 @@ class _VehicleScreenState extends State<VehicleScreen> {
     if (value == null) return false;
     final s = value.toString().trim();
     return s.isNotEmpty && s != '-' && s != 'null' && s != '0';
+  }
+
+  String? _normalizarEstadoRobado(dynamic value) {
+    if (value == null) return null;
+
+    final raw = value.toString().trim();
+    if (raw.isEmpty || raw == '-' || raw.toLowerCase() == 'null') {
+      return null;
+    }
+
+    final v = raw.toUpperCase();
+    if (v == 'S' || v == 'SI' || v == 'SÍ' || v == '1' || v == 'TRUE') {
+      return 'SI';
+    }
+    if (v == 'N' || v == 'NO' || v == '0' || v == 'FALSE') {
+      return 'NO';
+    }
+
+    return raw;
   }
 
   Widget _miniStat(IconData icon, String label, String value) {

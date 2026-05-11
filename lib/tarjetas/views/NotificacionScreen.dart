@@ -12,6 +12,8 @@ import 'package:estacionamientotarifado/servicios/servicioTiposMultas.dart';
 import 'package:estacionamientotarifado/servicios/gestorImpresora.dart';
 import 'package:estacionamientotarifado/servicios/servicioNotificaciones2.dart'
     as svc2;
+import 'package:estacionamientotarifado/core/colores.dart';
+import 'package:estacionamientotarifado/shared/widgets/estado_carga_app.dart';
 import 'package:estacionamientotarifado/tarjetas/views/ReimpresionScreen.dart';
 import 'package:estacionamientotarifado/tarjetas/views/WidgetsImpresora.dart';
 import '../../snnipers/cambia_mayusculas.dart';
@@ -1041,11 +1043,7 @@ class _NotificacionesscreenState extends State<Notificacionesscreen> {
               width: double.infinity,
               padding: const EdgeInsets.all(20),
               decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFF0A1628), Color(0xFF000000)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
+                gradient: AppColores.gradientePrincipal,
               ),
               child: const Row(
                 children: [
@@ -1112,11 +1110,7 @@ class _NotificacionesscreenState extends State<Notificacionesscreen> {
         centerTitle: true,
         flexibleSpace: Container(
           decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [Color(0xFF0A1628), Color(0xFF000000)],
-            ),
+            gradient: AppColores.gradientePrincipal,
           ),
         ),
         actions: [
@@ -1144,53 +1138,12 @@ class _NotificacionesscreenState extends State<Notificacionesscreen> {
   }
 
   Widget _buildCargando() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [_colorPrimario, _colorPurple],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.receipt_long_rounded,
-              size: 40,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 20),
-          Text(
-            'SIMERT',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: _colorPrimario,
-              letterSpacing: 1.2,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Cargando datos...',
-            style: TextStyle(fontSize: 13, color: Colors.grey[600]),
-          ),
-          const SizedBox(height: 20),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 48),
-            child: LinearProgressIndicator(
-              backgroundColor: Colors.grey.shade200,
-              valueColor: AlwaysStoppedAnimation<Color>(_colorPurple),
-              minHeight: 3,
-              borderRadius: BorderRadius.circular(4),
-            ),
-          ),
-        ],
-      ),
+    return EstadoCargaApp(
+      icono: Icons.receipt_long_rounded,
+      mensaje: 'Cargando datos...',
+      colorInicio: _colorPrimario,
+      colorFin: _colorPurple,
+      colorProgreso: _colorPurple,
     );
   }
 
@@ -2055,6 +2008,7 @@ class _NotificacionesscreenState extends State<Notificacionesscreen> {
     );
   }
 
+  // ignore: unused_element
   Future<void> _imprimirMulta() async {
     // Imprimir la multa usando el gestor
     bool resultado = await _gestorImpresora.imprimirMultaConDialogo(
