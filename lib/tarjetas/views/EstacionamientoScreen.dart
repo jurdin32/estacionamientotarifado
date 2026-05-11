@@ -1878,18 +1878,35 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
       ),
     );
 
-    // Determinar si esta tarjeta ocupada es de OTRO usuario (solo aplica en vista "Todos")
+    // Determinar si esta tarjeta ocupada es de OTRO usuario
     final bool esDeOtroUsuario =
         ocupado &&
         !_esSuperuser &&
         _usuario != null &&
-        tarjetaInfo.usuario > 0 &&
-        tarjetaInfo.usuario != _usuario;
+        // No hay tarjeta del usuario actual para este estacionamiento
+        !_estacionamientosTarjeta.any(
+          (t) => t.estacionId == estacion.id && t.usuario == _usuario,
+        );
 
     // ── Vista simplificada para tarjetas de otros usuarios ──────────
     if (esDeOtroUsuario) {
+      // Buscar el usuario que registró esta tarjeta
+      final tarjetaOtro = _estacionamientosTarjeta.firstWhere(
+        (t) => t.estacionId == estacion.id,
+        orElse: () => Estacionamiento_Tarjeta(
+          t: 0,
+          placa: '',
+          fecha: '',
+          horaEntrada: '',
+          horaSalida: '',
+          tiempo: 0,
+          estacionId: 0,
+          usuario: 0,
+        ),
+      );
+      final int idRegistrador = tarjetaOtro.usuario;
       final String nombreRegistrador =
-          _nombresUsuarios[tarjetaInfo.usuario] ?? 'ID ${tarjetaInfo.usuario}';
+          _nombresUsuarios[idRegistrador] ?? 'ID $idRegistrador';
       return Card(
         elevation: 2,
         shadowColor: Colors.orange.withValues(alpha: 0.2),
