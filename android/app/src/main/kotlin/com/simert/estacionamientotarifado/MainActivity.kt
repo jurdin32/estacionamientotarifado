@@ -21,10 +21,11 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, _ ->
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
                 "minimizar" -> {
                     moveTaskToBack(true)
+                    result.success(true)
                 }
                 "enviarToken" -> {
                     val args = call.arguments as? Map<String, Any>
@@ -33,8 +34,6 @@ class MainActivity : FlutterFragmentActivity() {
                     val id = (args?.get("id_usuario") as? Int) ?: -1
 
                     if (!token.isNullOrEmpty()) {
-                        // Enviar token al servicio persistente para que pueda
-                        // consultar la API incluso si la app Flutter se cierra.
                         val intent = Intent(this, ServicioPersistente::class.java).apply {
                             putExtra("token", token)
                             if (!nombre.isNullOrEmpty()) putExtra("nombre_usuario", nombre)
@@ -45,6 +44,32 @@ class MainActivity : FlutterFragmentActivity() {
                         } else {
                             startService(intent)
                         }
+                    }
+                    result.success(true)
+                }
+                "enviarTarjetasActivas" -> {
+                    // Flutter envía las tarjetas activas directamente al servicio nativo
+                    val tarjetasJson = call.arguments as? String
+                    android.util.Log.d("SIMERT", "[CHANNEL] Recibido enviarTarjetasActivas: $tarjetasJson")
+                    if (!tarjetasJson.isNullOrEmpty()) {
+                        try {
+                            val intent = Intent(this, ServicioPersistente::class.java).apply {
+                                putExtra("tarjetas_json", tarjetasJson)
+                            }
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                startForegroundService(intent)
+                            } else {
+                                startService(intent)
+                            }
+                            android.util.Log.d("SIMERT", "[CHANNEL] ✅ Servicio iniciado con tarjetas")
+                            result.success("OK")
+                        } catch (e: Exception) {
+                            android.util.Log.e("SIMERT", "[CHANNEL] ❌ Error iniciando servicio: ${e.message}")
+                            result.error("START_SERVICE_FAILED", e.message, null)
+                        }
+                    } else {
+                        android.util.Log.w("SIMERT", "[CHANNEL] tarjetasJson está vacío")
+                        result.success("EMPTY_DATA")
                     }
                 }
             }

@@ -27,10 +27,7 @@ Funcionalidades principales:
 ## Notas de la versión (Release notes)
 
 ```
-Mejoras de rendimiento y estabilidad general.
-Sincronización de datos optimizada.
-Correcciones en registros, consultas y permisos por rol.
-Interfaz más clara y consistente en móvil, tablet y escritorio.
+Actualización de clasificación de contenido a +16 para cumplir con los requisitos de Google Play. Correcciones de estabilidad, optimización en la sincronización de datos y mejoras en la interfaz de usuario para móvil, tablet y escritorio.
 ```
 
 ## Tags o palabras clave
@@ -42,5 +39,5 @@ estacionamiento, tránsito, municipal, SIMERT, El Guabo, infracciones, tarjetas,
 ## Categoría en Google Play
 
 - **Categoría:** Herramientas
-- **Clasificación:** +14
+- **Clasificación:** +16
 - **URL de la app:** https://play.google.com/store/apps/details?id=com.simert.estacionamientotarifado

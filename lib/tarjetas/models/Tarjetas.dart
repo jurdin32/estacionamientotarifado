@@ -83,5 +83,6 @@ class Estacionamiento_Tarjeta {
     'placa': placa,
     't': t,
     'usuario': usuario,
+    'usuario_nombre': usuarioNombre,
   };
 }

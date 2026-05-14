@@ -774,25 +774,6 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
     return estacion.direccion.contains('(') && estacion.direccion.contains(')');
   }
 
-  Future<void> _loadRangoPreferencias() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final rangoGuardado = prefs.getString('rango_estacionamientos') ?? '';
-
-      if (mounted && !_appEnSegundoPlano) {
-        setState(() {
-          _rangoEstacionamientos = rangoGuardado;
-          _rangoController.text = rangoGuardado;
-        });
-        if (rangoGuardado.isNotEmpty) {
-          _aplicarRangoEstacionamientos();
-        }
-      }
-    } catch (e) {
-      debugPrint('Error cargando rango de estacionamientos: $e');
-    }
-  }
-
   Future<void> _guardarRangoPreferencias(String rango) async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -1108,7 +1089,9 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
           connectivityResult.first != ConnectivityResult.none;
 
       if (!hasConnection) {
-        debugPrint('ðŸ“µ Sin conexiÃ³n - No se pueden obtener estacionamientos');
+        debugPrint(
+          'ðŸ“µ Sin conexiÃ³n - No se pueden obtener estacionamientos',
+        );
         return;
       }
 
@@ -1272,9 +1255,13 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
         });
       }
 
-      debugPrint('âœ… Estacionamiento $estacionId liberado por tiempo expirado');
+      debugPrint(
+        'âœ… Estacionamiento $estacionId liberado por tiempo expirado',
+      );
     } catch (e) {
-      debugPrint('âŒ Error al liberar estacionamiento expirado $estacionId: $e');
+      debugPrint(
+        'âŒ Error al liberar estacionamiento expirado $estacionId: $e',
+      );
     } finally {
       // Mantener guardia 2s para que el WS broadcast llegue
       Future.delayed(

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:estacionamientotarifado/tarjetas/models/Estacionamiento.dart';
 import 'package:estacionamientotarifado/servicios/httpMonitorizado.dart';
 
@@ -84,28 +85,39 @@ Future<void> actualizarRegistro({
   });
 
   try {
-    final response = await HttpMonitorizado.put(
-      url,
-      headers: {'Content-Type': 'application/json'},
-      body: body,
+    debugPrint(
+      '[ACTUALIZAR]  Enviando actualización a #$estacionId: estado=$estado, placa=$placa',
+    );
+    final response =
+        await HttpMonitorizado.put(
+          url,
+          headers: {'Content-Type': 'application/json'},
+          body: body,
+        ).timeout(
+          const Duration(seconds: 10),
+          onTimeout: () => throw Exception('Timeout al actualizar estación'),
+        );
+
+    debugPrint(
+      '[ACTUALIZAR]  Status: ${response.statusCode}, Body: ${response.body}',
     );
 
-    print('Status: ${response.statusCode}');
-    print('Respuesta API: ${response.body}');
-
     if (response.statusCode == 200) {
-      print('Registro actualizado correctamente');
+      debugPrint('[OK]  Registro #$estacionId actualizado correctamente');
     } else if (response.statusCode == 409) {
       // Conflicto: otro usuario ya modificó este recurso
+      debugPrint(
+        '[CONFLICTO]  Estación #$estacionId ya fue registrada por otro usuario',
+      );
       throw ApiConflictException(estacionId, response.body);
     } else {
-      print(
-        'Error al actualizar registro: ${response.statusCode} ${response.body}',
+      debugPrint(
+        '[ERROR]  Error al actualizar #$estacionId: ${response.statusCode} ${response.body}',
       );
       throw ApiStatusException(response.statusCode, response.body);
     }
   } catch (e) {
-    print('Error en la solicitud: $e');
+    debugPrint('[ERROR]  Excepción en actualizarRegistro: $e');
     rethrow;
   }
 }

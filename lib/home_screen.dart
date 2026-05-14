@@ -205,8 +205,8 @@ class _HomeScreenState extends State<HomeScreen>
               onTimeout: () => [multas, tarjetas],
             );
 
-        final multasHttp = resultados[0] as List<Map<String, dynamic>>;
-        final tarjetasHttp = resultados[1] as List<Map<String, dynamic>>;
+        final multasHttp = resultados[0];
+        final tarjetasHttp = resultados[1];
 
         // Solo actualizar si HTTP devolvió datos (si falló, mantener caché)
         if (multasHttp.isNotEmpty) {

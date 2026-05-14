@@ -321,19 +321,24 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
               if (local != null) lista[i] = local;
               continue;
             }
-            // No revertir ocupado-> libre si hay tarjeta activa local
+            // No revertir ocupado-> libre si hay tarjeta activa local.
+            // Verificar en memoria y también en SharedPreferences como fallback
+            // por si el snapshot de estaciones llega antes que el de tarjetas.
             final local = mapaLocal[remoto.id];
             if (local != null &&
                 local.estado == true &&
-                remoto.estado == false &&
-                _estacionamientosTarjeta.any(
-                  (t) => t.estacionId == remoto.id,
-                )) {
-              debugPrint(
-                '[PROTEGIDO]  WS snapshot: protegiendo estación #${local.numero} '
-                '(tiene tarjeta activa)',
-              );
-              lista[i] = local;
+                remoto.estado == false) {
+              final tieneTarjetaActiva = _estacionamientosTarjeta.any(
+                    (t) => t.estacionId == remoto.id,
+                  ) ||
+                  _verificarTarjetaEnPrefs(remoto.id);
+              if (tieneTarjetaActiva) {
+                debugPrint(
+                  '[PROTEGIDO]  WS snapshot: protegiendo estación #${local.numero} '
+                  '(tiene tarjeta activa)',
+                );
+                lista[i] = local;
+              }
             }
           }
         }
@@ -377,16 +382,22 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
         // Protección anti-reversión: no liberar si hay tarjeta activa local.
         // El servidor podría enviar estado=false por una race condition o
         // snapshot parcial; la liberación real llega con tarjetas/delete.
+        // Verificar en memoria y también en SharedPreferences como fallback.
         final actual = _estaciones.where((e) => e.id == nuevo.id).firstOrNull;
         if (actual != null &&
             actual.estado == true &&
-            nuevo.estado == false &&
-            _estacionamientosTarjeta.any((t) => t.estacionId == nuevo.id)) {
-          debugPrint(
-            '[PROTEGIDO]  WS update: bloqueando liberación de estación '
-            '#${actual.numero} (tiene tarjeta activa)',
-          );
-          return;
+            nuevo.estado == false) {
+          final tieneTarjetaActiva = _estacionamientosTarjeta.any(
+                (t) => t.estacionId == nuevo.id,
+              ) ||
+              _verificarTarjetaEnPrefs(nuevo.id);
+          if (tieneTarjetaActiva) {
+            debugPrint(
+              '[PROTEGIDO]  WS update: bloqueando liberación de estación '
+              '#${actual.numero} (tiene tarjeta activa)',
+            );
+            return;
+          }
         }
 
         if (mounted) {
@@ -993,6 +1004,30 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
             .toList();
       }
 
+      // --- Verificación de consistencia: estaciones ocupadas sin tarjetas ---
+      // Si hay estaciones con estado=true pero cachedTarjetas está vacío,
+      // intentar reconstruir desde SharedPreferences (fallback por si el
+      // debounce de _persistirCacheCompleto no alcanzó a ejecutarse).
+      if (cachedEstaciones.any((e) => e.estado) && cachedTarjetas.isEmpty) {
+        final tarjetasRaw = prefs.getString('estacionamientos_tarjeta');
+        if (tarjetasRaw != null && tarjetasRaw.isNotEmpty && tarjetasRaw != '[]') {
+          try {
+            final List<dynamic> tarjetasList = json.decode(tarjetasRaw);
+            final reconstruidas = tarjetasList
+                .map((e) => _parseEstacionamientoTarjetaFromJson(e))
+                .where((e) => e != null)
+                .cast<Estacionamiento_Tarjeta>()
+                .toList();
+            if (reconstruidas.isNotEmpty) {
+              cachedTarjetas = reconstruidas;
+              debugPrint('[CARGA]  Reconstruidas ${reconstruidas.length} tarjetas desde SharedPreferences');
+            }
+          } catch (e) {
+            debugPrint('[CARGA]  Error reconstruyendo tarjetas: $e');
+          }
+        }
+      }
+
       // --- Datos de caché: tarjetas tiempo (numero ->  minutos consumidos) ---
       final tarjetasTiempoStr = prefs.getString('tarjetas_tiempo');
       Map<int, int> cachedTiemposTarjeta = {};
@@ -1324,7 +1359,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
 
     // 2. LIBERAR EN SERVIDOR EN BACKGROUND (sin await)
     // El servicio persistente Android también lo hace, pero por si acaso.
-    unawaited(() async {
+    unawaited((() async {
       try {
         if (!_appEnSegundoPlano) {
           final connectivity = await Connectivity().checkConnectivity();
@@ -1343,31 +1378,32 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
         }
       } catch (e) {
         debugPrint('[ADVERTENCIA]  Error al liberar en servidor: $e');
+        _mostrarErrorModal(_mensajeErrorLiberacion(e));
       }
-    }());
+    })());
   }
 
   /// Ejecuta la liberación completa de un estacionamiento (llamado desde el botón Liberar).
   void _ejecutarLiberacion(int estacionId) {
-    unawaited(() async {
+    unawaited((() async {
       setState(() {
         _estacionamientosLiberando[estacionId] = true;
       });
 
-      final tarjetaPrevia = _estacionamientosTarjeta
-          .where((t) => t.estacionId == estacionId)
-          .toList();
-
       _enProceso.add(estacionId);
 
+      // 1. LIBERAR LOCAL INMEDIATAMENTE (siempre, sin importar el servidor)
+      _updateUIAfterChange(estacionId, false, '');
+      setState(() {
+        _estacionamientosTarjeta.removeWhere(
+          (t) => t.estacionId == estacionId,
+        );
+      });
+      await _persistirCacheInmediato();
+
+      // 2. SINCRONIZAR CON SERVIDOR EN BACKGROUND
+      // Si falla, NO se revierte la UI. Solo se muestra un modal de error.
       try {
-        _updateUIAfterChange(estacionId, false, '');
-        setState(() {
-          _estacionamientosTarjeta.removeWhere(
-            (t) => t.estacionId == estacionId,
-          );
-        });
-        await _persistirCacheCompleto();
         await actualizarRegistro(
           estacionId: estacionId,
           placa: '',
@@ -1375,19 +1411,8 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
           token: _token,
         );
         _fetchAndCacheEstacionamientosTarjeta();
-        _showCustomSnackBar(
-          'Estacionamiento #${_estaciones.firstWhere(
-            (e) => e.id == estacionId,
-            orElse: () => _estaciones.isNotEmpty ? _estaciones.first : Estacionamiento(id: 0, numero: 0, direccion: '', placa: '', estado: false),
-          ).numero} liberado correctamente',
-        );
       } catch (e) {
-        _updateUIAfterChange(estacionId, true, '');
-        setState(() {
-          _estacionamientosTarjeta.addAll(tarjetaPrevia);
-        });
-        unawaited(_persistirCacheCompleto());
-        _showCustomSnackBar('Error al liberar: $e', isError: true);
+        _mostrarErrorModal(_mensajeErrorLiberacion(e));
       } finally {
         if (mounted) {
           setState(() {
@@ -1399,7 +1424,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
           () => _enProceso.remove(estacionId),
         );
       }
-    }());
+    })());
   }
 
   Widget _buildTab(String label, int count, Color color) {
@@ -1502,6 +1527,76 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
   }
 
   /// Índice de tab ->  filtro de estado.
+
+  void _mostrarErrorModal(String mensaje) {
+    if (!mounted || _appEnSegundoPlano) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(Icons.error_outline, color: Color(0xFFD32F2F), size: 24),
+            const SizedBox(width: 10),
+            const Text('Error', style: TextStyle(fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Text(mensaje, style: const TextStyle(fontSize: 14)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cerrar', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _mensajeErrorLiberacion(dynamic error) {
+    final msg = error.toString();
+    if (msg.contains('SocketException') ||
+        msg.contains('HandshakeException') ||
+        msg.contains('TimeoutException') ||
+        msg.contains('sin conexión')) {
+      return 'No se pudo conectar con el servidor para liberar el estacionamiento.\n\n'
+          'El estacionamiento ya fue liberado localmente. '
+          'Los cambios se sincronizar\nautomáticamente cuando la conexión se restablezca.';
+    }
+    if (msg.contains('409') || msg.contains('Conflict')) {
+      return 'El estacionamiento ya fue liberado por otro usuario.\n\n'
+          'No es necesario realizar ninguna acción adicional.';
+    }
+    if (msg.contains('401') || msg.contains('No autorizado')) {
+      return 'Su sesión ha expirado. Por favor, cierre sesión y vuelva a iniciarla.';
+    }
+    final msgCorto = msg.length > 200 ? msg.substring(0, 200) : msg;
+    return 'Ocurrió un error al liberar el estacionamiento: ' + msgCorto + '\n\n'
+        'El estacionamiento ya fue liberado localmente. '
+        'Si el problema persiste, contacte al administrador.';
+  }
+
+  String _mensajeErrorRegistro(dynamic error) {
+    final msg = error.toString();
+    if (msg.contains('SocketException') ||
+        msg.contains('HandshakeException') ||
+        msg.contains('TimeoutException')) {
+      return 'No se pudo conectar con el servidor para registrar el estacionamiento.\n\n'
+          'El registro se ha guardado localmente. '
+          'Los cambios se sincronizarán automáticamente cuando la conexión se restablezca.';
+    }
+    if (msg.contains('409') || msg.contains('Conflict')) {
+      return 'Este estacionamiento ya fue registrado por otro usuario.\n\n'
+          'Por favor, seleccione otro espacio disponible.';
+    }
+    if (msg.contains('400')) {
+      return 'Los datos ingresados no son válidos.\n\n'
+          'Verifique que la placa y el número de tarjeta sean correctos.';
+    }
+    final msgCorto = msg.length > 200 ? msg.substring(0, 200) : msg;
+    return 'Ocurrió un error al registrar: ' + msgCorto;
+  }
+
   void _cambiarFiltroTab(int index) {
     const estados = ['todos', 'disponibles', 'ocupados', 'deshabilitados'];
     if (index < 0 || index >= estados.length) return;
@@ -1608,6 +1703,36 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
 
   /// Persiste el estado actual de estacionamientos y tarjetas en SharedPreferences.
   /// Usa debounce de 2 segundos para no escribir a disco en cada evento WS.
+  /// Persiste el estado actual de estacionamientos y tarjetas en SharedPreferences
+  /// INMEDIATAMENTE, sin debounce. Util para operaciones criticas como el registro
+  /// optimista, donde el cache debe sobrevivir a un cierre abrupto de la app.
+  Future<void> _persistirCacheInmediato() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        'estacionamientos',
+        json.encode(_estaciones.map((e) => e.toJson()).toList()),
+      );
+      await prefs.setString(
+        'estacionamientos_tarjeta',
+        json.encode(_estacionamientosTarjeta.map((e) => e.toJson()).toList()),
+      );
+      if (_tiemposTarjeta.isNotEmpty) {
+        await prefs.setString(
+          'tarjetas_tiempo',
+          json.encode(
+            _tiemposTarjeta.map((k, v) => MapEntry(k.toString(), v)),
+          ),
+        );
+      }
+      debugPrint('[CACHE]  Persistencia inmediata completada '
+        '(${_estaciones.length} est, ${_estacionamientosTarjeta.length} tar)',
+      );
+    } catch (e) {
+      debugPrint('[ADVERTENCIA]  Error en persistencia inmediata: $e');
+    }
+  }
+
   Future<void> _persistirCacheCompleto() async {
     _persistDebounce?.cancel();
     _persistDebounce = Timer(const Duration(seconds: 2), () async {
@@ -1633,6 +1758,17 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
         debugPrint('[ADVERTENCIA]  Error al persistir caché: $e');
       }
     });
+  }
+
+  /// Verifica en SharedPreferences si existe una tarjeta activa para el estacionamiento dado.
+  /// Util como fallback cuando el snapshot de estaciones del WS llega antes que el de tarjetas.
+  bool _verificarTarjetaEnPrefs(int estacionId) {
+    try {
+      // Verificar en la lista en memoria (ya cargada desde SharedPreferences en _loadUserAndData)
+      return _estacionamientosTarjeta.any((t) => t.estacionId == estacionId);
+    } catch (_) {
+      return false;
+    }
   }
 
   void _updateUIAfterChange(int estacionId, bool nuevoEstado, String placa) {
@@ -3083,7 +3219,9 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
                                               120,
                                             );
                                       });
-                                      unawaited(_persistirCacheCompleto());
+                                      // Persistir INMEDIATAMENTE (sin debounce) para que
+                                      // el cache de tarjetas sobreviva a un cierre abrupto.
+                                      unawaited(_persistirCacheInmediato());
 
                                       // 2. Cerrar diálogo al instante
                                       Navigator.pop(context);
@@ -3092,7 +3230,7 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
                                       );
 
                                       // 3. Sincronizar con el servidor en background
-                                      unawaited(() async {
+                                      unawaited((() async {
                                         try {
                                           // Ejecutar registro de tarjeta y actualización de estación
                                           // en PARALELO para que el broadcast WS salga más rápido
@@ -3151,13 +3289,10 @@ class _EstacionamientoScreenState extends State<EstacionamientoScreen>
                                             unawaited(
                                               _persistirCacheCompleto(),
                                             );
-                                            _showCustomSnackBar(
-                                              '[X]  Error al sincronizar con el servidor: $e',
-                                              isError: true,
-                                            );
+                                            _mostrarErrorModal(_mensajeErrorRegistro(e));
                                           }
                                         }
-                                      }());
+                                      })());
                                     },
                               child: const Row(
                                 mainAxisAlignment: MainAxisAlignment.center,

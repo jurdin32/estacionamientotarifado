@@ -1,14 +1,14 @@
 # Checklist de Publicacion - Google Play (Tarifado)
 
-Fecha de referencia: 5 de agosto de 2026
+Fecha de referencia: 11 de mayo de 2026
 
 ## 1) Antes de compilar
 
-- [x] Actualizar version en pubspec.yaml (version: 1.0.3+14).
-- [x] Confirmar que el numero despues de + aumento (versionCode unico: +14).
+- [x] Actualizar version en pubspec.yaml (version: 1.0.3+16).
+- [x] Confirmar que el numero despues de + aumento (versionCode unico: +16).
 - [x] Confirmar que la firma release usa la upload key correcta en android/key.properties.
-- [x] Fijar minSdk = 23 (Android 6.0) para compatibilidad con version +14.
-- [x] **AAB compilado**: `build/app/outputs/bundle/release/app-release.aab` (51.7 MB)
+- [x] Fijar minSdk = 23 (Android 6.0) para compatibilidad con version +16.
+- [x] **AAB compilado**: `build/app/outputs/bundle/release/app-release.aab` (51.8 MB)
 - [x] **Firma verificada**: SHA1 `86:18:D6:F8:E6:F1:10:B4:A9:A8:BE:F0:85:D8:8E:8E:C8:18:64:84` ✓
 
 ## 2) Compilar AAB ✅ COMPLETADO
@@ -22,7 +22,7 @@ flutter build appbundle --release
 Salida:
 
 ```
-√ Built build\app\outputs\bundle\release\app-release.aab (51.7MB)
+√ Built build\app\outputs\bundle\release\app-release.aab (51.8MB)
 ```
 
 ## 3) Subir en Play Console (PENDIENTE - lo haces manualmente)
@@ -59,7 +59,7 @@ Interfaz mas clara y consistente en movil, tablet y escritorio.
 - keyAlias: upload
 - Certificado valido: 2026 - 2053
 
-## 7) Configuracion Play Store (+14)
+## 7) Configuracion Play Store (+16)
 
 Antes de publicar, asegurar en Play Console:
 
@@ -80,7 +80,8 @@ Antes de publicar, asegurar en Play Console:
 
 | Archivo | Cambio |
 |---------|--------|
-| `pubspec.yaml` | version: `1.0.3+13` → `1.0.3+14` |
+| `pubspec.yaml` | version: `1.0.3+16` (sin cambios) |
 | `android/app/build.gradle.kts` | minSdk: `flutter.minSdkVersion` → `23` |
 | `CHECKLIST_PUBLICACION_PLAY.md` | Actualizada con pasos completados |
-| `build/app/outputs/bundle/release/app-release.aab` | ✅ Compilado (51.7 MB) |
+| `TEXTOS_PLAY_STORE.md` | Clasificación: `+14` → `+16` |
+| `build/app/outputs/bundle/release/app-release.aab` | ⏳ Por compilar |

@@ -4,25 +4,19 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
-import android.content.Context
 import android.content.Intent
-import android.content.SharedPreferences
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.Log
-import org.json.JSONArray
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.io.OutputStreamWriter
-import java.net.HttpURLConnection
-import java.net.URL
 import java.text.SimpleDateFormat
-import java.util.Calendar
+import java.util.Date
 import java.util.Locale
 import java.util.Timer
 import java.util.TimerTask
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * Servicio Foreground Android diseñado para:
@@ -30,21 +24,22 @@ import java.util.TimerTask
  * 1. MANTENER LA APP VIVA: Mientras este servicio corra, Android NO puede
  *    matar el proceso (aunque el usuario deslice en multitasking).
  *
- * 2. CONSULTAR LA API REAL cada 30s: Obtiene estaciones y tarjetas
- *    directamente del servidor, SIN depender del caché de Flutter.
+ * 2. RECIBIR DATOS DESDE FLUTTER VÍA INTENT: Flutter envía las tarjetas
+ *    activas directamente a través del MethodChannel. El servicio las
+ *    mantiene en memoria y actualiza la notificación.
  *
- * 3. ACTUALIZAR SHAREDPREFERENCES: Cada vez que sincroniza, escribe los
- *    datos actualizados en las mismas SharedPreferences que usa Flutter,
- *    para que la interfaz refleje los cambios reales del servidor.
+ * 3. NOTIFICACIÓN CON CUENTA REGRESIVA + HORA ACTUAL: Muestra en la barra
+ *    de estado la hora actual y todas las tarjetas activas con tiempo
+ *    restante en tiempo real (HH:mm:ss). La hora actual se actualiza
+ *    cada segundo para mostrar que la app está activa.
+ *    Esta notificación NO se cierra cuando la app Flutter se cierra.
  *
- * 4. NOTIFICACIÓN CON CUENTA REGRESIVA: Muestra en la barra de estado
- *    la tarjeta más próxima a expirar, con tiempo restante en tiempo real.
- *
- * 5. LIBERAR EN EL SERVIDOR: Cuando una tarjeta llega a 0, envía la
- *    liberación al servidor automáticamente.
- *
- * 6. START_STICKY + AUTO-REINICIO: Si Android lo mata (extrema presión
+ * 4. START_STICKY + AUTO-REINICIO: Si Android lo mata (extrema presión
  *    de memoria), se reinicia solo y sigue funcionando.
+ *
+ * NOTA: El servidor libera automáticamente cuando el tiempo expira.
+ * La app NO necesita llamar a liberarEnServidor(). Solo la liberación
+ * manual se maneja desde la UI de Flutter.
  */
 class ServicioPersistente : Service() {
 
@@ -52,38 +47,39 @@ class ServicioPersistente : Service() {
         private const val TAG = "SIMERT_Servicio"
         private const val NOTIFICACION_ID = 99
         private const val CHANNEL_ID = "servicio_persistente_channel"
-        private const val PREFS_FLUTTER = "FlutterSharedPreferences"
-        private const val API_BASE = "https://simert.transitoelguabo.gob.ec/api"
-        private const val KEY_TOKEN = "flutter.token"
-        private const val KEY_ID = "flutter.id"
-        private const val KEY_NAME = "flutter.name"
     }
 
-    private var timerSync: Timer? = null
     private var timerNotificacion: Timer? = null
     private val handler = Handler(Looper.getMainLooper())
-    private val dateFormatFecha = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+
+    // Lista de tarjetas activas en memoria (recibidas desde Flutter vía Intent)
+    private val tarjetasMemoria = mutableListOf<TarjetaActiva>()
 
     // Variables de estado de la notificación
     private var ultimoEstacionId = -1
-    private var ultimaPlaca = ""
-    private var ultimoUsuario = ""
     private var segundosRestantes = 0L
 
     override fun onCreate() {
         super.onCreate()
-        Log.i(TAG, "=== ServicioPersistente INICIADO ===")
+        Log.i(TAG, "=== ServicioPersistente INICIADO (datos desde Flutter) ===")
         crearCanalNotificacion()
-        mostrarNotificacion("SIMERT", "Iniciando monitoreo...")
 
-        // Timer: sincronizar con servidor cada 30s
-        timerSync = Timer("syncTimer", true).apply {
-            schedule(object : TimerTask() {
-                override fun run() = sincronizarConServidor()
-            }, 0, 30_000L)
+        // Mostrar notificación inicial inmediatamente
+        try {
+            mostrarNotificacionLista(emptyList())
+        } catch (e: Exception) {
+            Log.e(TAG, "Error en onCreate: ${e.message}")
+            val notif = Notification.Builder(this, CHANNEL_ID)
+                .setContentTitle("SIMERT Estacionamientos")
+                .setContentText("Iniciando monitoreo...")
+                .setSmallIcon(android.R.drawable.ic_menu_compass)
+                .setOngoing(true)
+                .setAutoCancel(false)
+                .build()
+            startForeground(NOTIFICACION_ID, notif)
         }
 
-        // Timer: cuenta regresiva cada 1s
+        // Timer: cuenta regresiva cada 1s sobre datos en memoria
         timerNotificacion = Timer("notifTimer", true).apply {
             schedule(object : TimerTask() {
                 override fun run() = actualizarCuentaRegresiva()
@@ -92,17 +88,19 @@ class ServicioPersistente : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Si recibimos un Intent con extras (desde MainActivity), procesarlos
-        intent?.let {
-            val token = it.getStringExtra("token")
-            if (!token.isNullOrEmpty()) {
-                guardarEnFlutterPrefs(KEY_TOKEN, token)
-                Log.i(TAG, "Token actualizado desde Flutter vía Intent")
+        try {
+            intent?.let {
+                // Recibir datos de tarjetas activas desde Flutter
+                val tarjetasJson = it.getStringExtra("tarjetas_json")
+                if (!tarjetasJson.isNullOrEmpty()) {
+                    Log.d(TAG, "onStartCommand: Recibido tarjetas_json (${tarjetasJson.length} chars)")
+                    procesarTarjetasDesdeFlutter(tarjetasJson)
+                } else {
+                    Log.w(TAG, "onStartCommand: tarjetas_json está vacío o es null")
+                }
             }
-            val nombre = it.getStringExtra("nombre_usuario")
-            if (!nombre.isNullOrEmpty()) guardarEnFlutterPrefs(KEY_NAME, nombre)
-            val id = it.getIntExtra("id_usuario", -1)
-            if (id > 0) guardarEnFlutterPrefs(KEY_ID, id)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error en onStartCommand: ${e.message}")
         }
         return START_STICKY
     }
@@ -111,9 +109,7 @@ class ServicioPersistente : Service() {
 
     override fun onDestroy() {
         Log.i(TAG, "Servicio destruido — reiniciando inmediatamente")
-        timerSync?.cancel()
         timerNotificacion?.cancel()
-        timerSync = null
         timerNotificacion = null
         super.onDestroy()
         // Auto-reinicio
@@ -129,274 +125,186 @@ class ServicioPersistente : Service() {
     }
 
     // ==================================================================
-    //  SINCRONIZACIÓN PRINCIPAL
+    //  RECEPCIÓN DE DATOS DESDE FLUTTER
+    //  Flutter envía las tarjetas activas vía MethodChannel → Intent
     // ==================================================================
 
     /**
-     * 1. Obtiene token desde SharedPreferences de Flutter
-     * 2. Consulta estaciones y tarjetas del servidor
-     * 3. Filtra solo las que están ocupadas + del día de hoy + con tiempo > 0
-     * 4. Selecciona la de MENOR tiempo restante
-     * 5. Actualiza SharedPreferences de Flutter para que la UI se refleje
-     * 6. Muestra la notificación con cuenta regresiva
+     * Procesa el JSON de tarjetas activas recibido desde Flutter.
+     * El JSON tiene el formato:
+     * [
+     *   {"estacionId": 1, "numero": 1, "placa": "ABC-123",
+     *    "usuario": 5, "usuarioNombre": "Juan", "segundos": 3600},
+     *   ...
+     * ]
      */
-    private fun sincronizarConServidor() {
+    private fun procesarTarjetasDesdeFlutter(json: String) {
         try {
-            val token = leerFlutterPrefs(KEY_TOKEN)
-            if (token.isNullOrEmpty()) {
-                Log.w(TAG, "Sin token — reintentando en 30s")
-                mostrarNotificacion("SIMERT", "Esperando inicio de sesión...")
-                return
-            }
-
-            // Leer ID del usuario actual para filtrar solo sus tarjetas
-            val usuarioActual = leerFlutterPrefs(KEY_ID)?.toIntOrNull() ?: 0
-
-            // Consultar API
-            val estacionesJson = consultarApi("$API_BASE/estacionamientos/?_tk=$token") ?: return
-            val tarjetasJson = consultarApi("$API_BASE/estacionamientos_tarjeta/?_tk=$token") ?: return
-
-            // Parsear estaciones ocupadas
-            val estacionesOcupadas = mutableSetOf<Int>()
-            val estacionesList = mutableListOf<Map<String, Any?>>()
-            try {
-                val arr = JSONArray(estacionesJson)
-                for (i in 0 until arr.length()) {
-                    val obj = arr.getJSONObject(i)
-                    val id = obj.optInt("id", -1)
-                    val estado = obj.optBoolean("estado", false)
-                    val placa = obj.optString("placa", "")
-                    val nombre = obj.optString("nombre", "")
-                    if (id > 0 && estado) estacionesOcupadas.add(id)
-                    estacionesList.add(mapOf(
-                        "id" to id,
-                        "estado" to estado,
-                        "placa" to placa,
-                        "nombre" to nombre
-                    ))
+            Log.d(TAG, "📥 Procesando tarjetas JSON (${json.length} chars): ${json.take(200)}...")
+            tarjetasMemoria.clear()
+            val arr = JSONArray(json)
+            Log.d(TAG, "📦 Array contiene ${arr.length()} elementos")
+            
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                val estacionId = obj.optInt("estacionId", -1)
+                if (estacionId <= 0) {
+                    Log.w(TAG, "⚠️ Elemento $i: estacionId inválido ($estacionId), saltando")
+                    continue
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error parseando estaciones: ${e.message}")
-                return
-            }
-
-            val ahora = Calendar.getInstance()
-            val hoy = dateFormatFecha.format(ahora.time)
-
-            // Parsear tarjetas
-            data class Tarjeta(
-                val estacionId: Int, val placa: String, val usuario: Int,
-                val usuarioNombre: String, val segundos: Long
-            )
-
-            val tarjetasActivas = mutableListOf<Tarjeta>()
-            val tarjetasList = mutableListOf<Map<String, Any?>>()
-
-            try {
-                val arr = JSONArray(tarjetasJson)
-                for (i in 0 until arr.length()) {
-                    val obj = arr.getJSONObject(i)
-                    val estacionId = obj.optInt("estacion_id", -1)
-                    if (estacionId <= 0) continue
-                    val fecha = obj.optString("fecha", "")
-                    if (fecha != hoy) continue
-                    if (!estacionesOcupadas.contains(estacionId)) continue
-
-                    // Filtrar solo tarjetas del usuario actual
-                    val usuarioTarjeta = obj.optInt("usuario", 0)
-                    if (usuarioActual > 0 && usuarioTarjeta > 0 && usuarioTarjeta != usuarioActual) continue
-
-                    val horaSalida = obj.optString("hora_salida", "")
-                    if (horaSalida.isEmpty()) continue
-
-                    val segs = calcularSegundosRestantes(horaSalida)
-                    if (segs == null || segs <= 0) continue
-
-                    val placa = obj.optString("placa", "S/P")
-                    val usuario = obj.optInt("usuario", 0)
-                    var usuarioNombre = obj.optString("usuario_nombre", "")
-                    // Si el nombre viene vacío, usar el nombre guardado en prefs
-                    if (usuarioNombre.isEmpty()) {
-                        usuarioNombre = leerFlutterPrefs(KEY_NAME) ?: "Usuario"
-                    }
-                    val horaEntrada = obj.optString("hora_entrada", "")
-
-                    tarjetasActivas.add(Tarjeta(estacionId, placa, usuario, usuarioNombre, segs))
-                    tarjetasList.add(mapOf(
-                        "estacion_id" to estacionId,
-                        "placa" to placa,
-                        "usuario" to usuario,
-                        "usuario_nombre" to usuarioNombre,
-                        "fecha" to fecha,
-                        "hora_entrada" to horaEntrada,
-                        "hora_salida" to horaSalida,
-                        "estacionId" to estacionId
-                    ))
+                val segs = obj.optLong("segundos", 0)
+                if (segs <= 0) {
+                    Log.w(TAG, "⚠️ Elemento $i (estacionId=$estacionId): segundos inválido ($segs), saltando")
+                    continue
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error parseando tarjetas: ${e.message}")
-                return
-            }
 
-            // ACTUALIZAR SHAREDPREFERENCES DE FLUTTER con datos reales del servidor
-            // Esto hace que la interfaz de Flutter refleje los cambios inmediatamente
-            actualizarSharedPreferences(estacionesList, tarjetasList, estacionesOcupadas)
-
-            // Actualizar notificación con la tarjeta más próxima a expirar
-            handler.post {
-                if (tarjetasActivas.isEmpty()) {
-                    if (ultimoEstacionId > 0) {
-                        Log.i(TAG, "Ya no hay tarjetas activas")
-                        ultimoEstacionId = -1
-                    }
-                    mostrarNotificacion("SIMERT", "Sin estacionamientos activos")
-                } else {
-                    // Ordenar por menor tiempo y tomar la primera
-                    val mejor = tarjetasActivas.minByOrNull { it.segundos }!!
-                    if (mejor.estacionId != ultimoEstacionId) {
-                        Log.i(TAG, "Mostrando #${mejor.estacionId} - ${mejor.segundos}s restantes")
-                        ultimoEstacionId = mejor.estacionId
-                        ultimaPlaca = mejor.placa
-                        ultimoUsuario = if (mejor.usuarioNombre.isNotEmpty())
-                            mejor.usuarioNombre
-                        else
-                            "Usuario"
-                    }
-                    segundosRestantes = mejor.segundos
-                    mostrarNotificacionCuentaRegresiva()
-                }
+                tarjetasMemoria.add(TarjetaActiva(
+                    estacionId = estacionId,
+                    numero = obj.optInt("numero", estacionId),
+                    placa = obj.optString("placa", "S/P"),
+                    usuario = obj.optInt("usuario", 0),
+                    usuarioNombre = obj.optString("usuarioNombre", "Usuario"),
+                    segundos = segs
+                ))
+                Log.d(TAG, "✅ Tarjeta agregada: #${estacionId} - ${obj.optString("placa", "S/P")} - ${segs}s")
             }
+            tarjetasMemoria.sortBy { it.segundos }
+            Log.d(TAG, "✨ Recibidas ${tarjetasMemoria.size} tarjetas válidas desde Flutter")
+
+            // Actualizar estado de la notificación
+            if (tarjetasMemoria.isNotEmpty()) {
+                val mejor = tarjetasMemoria.first()
+                ultimoEstacionId = mejor.estacionId
+                segundosRestantes = mejor.segundos
+                Log.d(TAG, "🎯 Enfoque en: #${mejor.numero} (${mejor.segundos}s restantes)")
+            } else {
+                ultimoEstacionId = -1
+                segundosRestantes = 0
+                Log.i(TAG, "🔔 Sin tarjetas activas - mostrando notificación vacía")
+            }
+            handler.post { mostrarNotificacionLista(tarjetasMemoria.toList()) }
         } catch (e: Exception) {
-            Log.e(TAG, "Error en sync: ${e.message}")
+            Log.e(TAG, "❌ Error parseando tarjetas desde Flutter: ${e.message}", e)
         }
     }
 
-    // ==================================================================
-    //  ACTUALIZAR SHAREDPREFERENCES (para que la UI de Flutter se refleje)
-    // ==================================================================
-
-    /**
-     * Escribe los datos actualizados del servidor en las SharedPreferences
-     * que usa Flutter, para que cuando la app esté abierta, los widgets
-     * vean los datos correctos al hacer setState o al recargar.
-     */
-    private fun actualizarSharedPreferences(
-        estaciones: List<Map<String, Any?>>,
-        tarjetas: List<Map<String, Any?>>,
-        estacionesOcupadas: Set<Int>
-    ) {
-        try {
-            val prefs = getSharedPreferences(PREFS_FLUTTER, MODE_PRIVATE)
-
-            // 1. Guardar estaciones actualizadas
-            val estJson = JSONArray()
-            for (e in estaciones) {
-                val obj = org.json.JSONObject()
-                obj.put("id", e["id"] as? Int ?: -1)
-                obj.put("estado", e["estado"] as? Boolean ?: false)
-                obj.put("placa", e["placa"] as? String ?: "")
-                obj.put("nombre", e["nombre"] as? String ?: "")
-                estJson.put(obj)
-            }
-            prefs.edit().putString("estacionamientos", estJson.toString()).apply()
-
-            // 2. Guardar tarjetas actualizadas (solo las activas)
-            val tarJson = JSONArray()
-            for (t in tarjetas) {
-                val obj = org.json.JSONObject()
-                obj.put("estacion_id", t["estacion_id"] as? Int ?: -1)
-                obj.put("placa", t["placa"] as? String ?: "")
-                obj.put("usuario", t["usuario"] as? Int ?: 0)
-                obj.put("usuario_nombre", t["usuario_nombre"] as? String ?: "")
-                obj.put("fecha", t["fecha"] as? String ?: "")
-                obj.put("hora_entrada", t["hora_entrada"] as? String ?: "")
-                obj.put("hora_salida", t["hora_salida"] as? String ?: "")
-                obj.put("estacionId", t["estacionId"] as? Int ?: -1)
-                tarJson.put(obj)
-            }
-            prefs.edit().putString("estacionamientos_tarjeta", tarJson.toString()).apply()
-
-            Log.d(TAG, "SharedPreferences actualizados: ${estaciones.size} est, ${tarjetas.size} tar")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error actualizando SharedPreferences: ${e.message}")
-        }
-    }
+    data class TarjetaActiva(
+        val estacionId: Int, val numero: Int, val placa: String, val usuario: Int,
+        val usuarioNombre: String, val segundos: Long
+    )
 
     // ==================================================================
-    //  CUENTA REGRESIVA Y LIBERACIÓN
+    //  CUENTA REGRESIVA
+    //  Trabaja sobre los datos en memoria recibidos desde Flutter.
+    //  Cuando una tarjeta expira, se elimina de la lista en memoria.
+    //  Flutter es responsable de limpiar SharedPreferences.
     // ==================================================================
 
     private fun actualizarCuentaRegresiva() {
-        if (ultimoEstacionId <= 0 || segundosRestantes <= 0) return
-
-        segundosRestantes--
-        if (segundosRestantes <= 0) {
-            // La tarjeta expiró — liberar en servidor y actualizar caché
-            Log.i(TAG, "⏰ #$ultimoEstacionId EXPIRÓ — liberando...")
-            liberarEnServidor(ultimoEstacionId)
-            ultimoEstacionId = -1
-            // Forzar sincronización inmediata para actualizar SharedPreferences
-            sincronizarConServidor()
+        if (tarjetasMemoria.isEmpty()) {
+            if (ultimoEstacionId > 0) {
+                Log.i(TAG, "Ya no hay tarjetas activas en memoria")
+                ultimoEstacionId = -1
+            }
+            handler.post { mostrarNotificacionLista(emptyList()) }
             return
         }
-        // Actualizar notificación cada 5 segundos para no saturar
-        if (segundosRestantes % 5 == 0L || segundosRestantes < 10) {
-            handler.post { mostrarNotificacionCuentaRegresiva() }
-        }
-    }
 
-    private fun liberarEnServidor(estacionId: Int) {
-        try {
-            val token = leerFlutterPrefs(KEY_TOKEN) ?: return
-            // GET
-            consultarApi("$API_BASE/liberar_estacionamiento.php?estacion_id=$estacionId&_tk=$token")
-            // POST (más confiable)
-            try {
-                val url = URL("$API_BASE/liberar_estacionamiento.php")
-                val conn = url.openConnection() as HttpURLConnection
-                conn.requestMethod = "POST"
-                conn.doOutput = true
-                conn.connectTimeout = 8_000
-                conn.readTimeout = 8_000
-                conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
-                OutputStreamWriter(conn.outputStream).use {
-                    it.write("estacion_id=$estacionId&_tk=$token")
-                    it.flush()
-                }
-                Log.i(TAG, "Liberación #$estacionId: HTTP ${conn.responseCode}")
-                conn.disconnect()
-            } catch (e: Exception) {
-                Log.w(TAG, "POST liberar falló: ${e.message}")
+        // Decrementar el contador de la primera tarjeta (la más próxima a expirar)
+        val primera = tarjetasMemoria.first()
+        if (primera.estacionId == ultimoEstacionId) {
+            segundosRestantes--
+            if (segundosRestantes <= 0) {
+                Log.i(TAG, "⏰ #$ultimoEstacionId EXPIRÓ — eliminando de memoria")
+                tarjetasMemoria.removeAll { it.estacionId == ultimoEstacionId }
+                ultimoEstacionId = -1
+                segundosRestantes = 0
+                handler.post { mostrarNotificacionLista(tarjetasMemoria.toList()) }
+                return
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "Error liberando #$estacionId: ${e.message}")
+            // Actualizar el objeto en memoria con el nuevo tiempo
+            val idx = tarjetasMemoria.indexOfFirst { it.estacionId == ultimoEstacionId }
+            if (idx >= 0) {
+                tarjetasMemoria[idx] = tarjetasMemoria[idx].copy(segundos = segundosRestantes)
+            }
+        } else {
+            // Cambió la tarjeta más próxima (llegaron datos nuevos desde Flutter)
+            ultimoEstacionId = primera.estacionId
+            segundosRestantes = primera.segundos
         }
+
+        // Actualizar notificación cada 1 segundo para que la hora actual se vea en tiempo real
+        handler.post { mostrarNotificacionLista(tarjetasMemoria.toList()) }
     }
 
     // ==================================================================
     //  NOTIFICACIONES
+    //  Siempre visibles, nunca se cierran.
+    //  Muestran TODAS las tarjetas activas en formato de lista
+    //  con la hora actual y contador regresivo en HH:mm:ss.
     // ==================================================================
 
-    private fun mostrarNotificacionCuentaRegresiva() {
-        if (ultimoEstacionId <= 0) return
-        val min = segundosRestantes / 60
-        val seg = segundosRestantes % 60
-        val tiempo = String.format("%02d:%02d", min, seg)
-        mostrarNotificacion(
-            "ID: $ultimoEstacionId | Nro: $ultimaPlaca",
-            "\u23F1 $tiempo restante | \uD83D\uDC64 $ultimoUsuario"
-        )
+    private fun formatearTiempo(segundos: Long): String {
+        val h = segundos / 3600
+        val m = (segundos % 3600) / 60
+        val s = segundos % 60
+        return if (h > 0) {
+            String.format("%02d:%02d:%02d", h, m, s)
+        } else {
+            String.format("%02d:%02d", m, s)
+        }
     }
 
-    private fun mostrarNotificacion(titulo: String, contenido: String) {
+    private fun horaActual(): String {
+        val sdf = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+        return sdf.format(Date())
+    }
+
+    private fun mostrarNotificacionLista(tarjetas: List<TarjetaActiva>) {
         try {
+            val hora = horaActual()
+
+            if (tarjetas.isEmpty()) {
+                val notif = Notification.Builder(this, CHANNEL_ID)
+                    .setContentTitle("\u23F0 SIMERT Estacionamientos")
+                    .setContentText("Hora actual: $hora")
+                    .setSmallIcon(android.R.drawable.ic_menu_compass)
+                    .setOngoing(true)
+                    .setAutoCancel(false)
+                    .setShowWhen(false)
+                    .build()
+                startForeground(NOTIFICACION_ID, notif)
+                return
+            }
+
+            // Construir título con hora actual + tarjeta más próxima
+            val mejor = tarjetas.first()
+            val tiempo = formatearTiempo(segundosRestantes)
+            val titulo = "\u23F0 $hora  |  #${mejor.numero} ${mejor.placa}  \u23F1 $tiempo"
+
+            // Construir líneas para InboxStyle (una por tarjeta activa)
+            val lines = mutableListOf<String>()
+            for ((i, t) in tarjetas.withIndex()) {
+                val tTiempo = formatearTiempo(t.segundos)
+                val icono = if (i == 0) "\u2B06" else "\uD83D\uDD39"
+                lines.add("$icono #${t.numero} ${t.placa}  \u23F1 $tTiempo  \uD83D\uDC64 ${t.usuarioNombre}")
+            }
+
+            val inboxStyle = Notification.InboxStyle()
+            inboxStyle.setBigContentTitle("\u23F0 SIMERT Estacionamientos  $hora")
+            for (line in lines) {
+                inboxStyle.addLine(line)
+            }
+            inboxStyle.setSummaryText("${tarjetas.size} estacionamiento(s) activo(s)")
+
             val notif = Notification.Builder(this, CHANNEL_ID)
                 .setContentTitle(titulo)
-                .setContentText(contenido)
+                .setContentText(lines.first())
                 .setSmallIcon(android.R.drawable.ic_menu_compass)
                 .setOngoing(true)
                 .setAutoCancel(false)
                 .setShowWhen(false)
+                .setStyle(inboxStyle)
                 .build()
             startForeground(NOTIFICACION_ID, notif)
         } catch (e: Exception) {
@@ -416,82 +324,5 @@ class ServicioPersistente : Service() {
             }
             (getSystemService(NotificationManager::class.java)).createNotificationChannel(channel)
         }
-    }
-
-    // ==================================================================
-    //  SHAREDPREFERENCES — LECTURA/ESCRITURA DIRECTA de las de Flutter
-    // ==================================================================
-
-    private fun leerFlutterPrefs(key: String): String? {
-        return try {
-            getSharedPreferences(PREFS_FLUTTER, MODE_PRIVATE).getString(key, null)
-        } catch (e: Exception) { null }
-    }
-
-    private fun guardarEnFlutterPrefs(key: String, value: String) {
-        try {
-            getSharedPreferences(PREFS_FLUTTER, MODE_PRIVATE)
-                .edit().putString(key, value).apply()
-        } catch (e: Exception) {
-            Log.w(TAG, "Error guardando $key: ${e.message}")
-        }
-    }
-
-    private fun guardarEnFlutterPrefs(key: String, value: Int) {
-        try {
-            getSharedPreferences(PREFS_FLUTTER, MODE_PRIVATE)
-                .edit().putInt(key, value).apply()
-        } catch (e: Exception) {
-            Log.w(TAG, "Error guardando $key: ${e.message}")
-        }
-    }
-
-    // ==================================================================
-    //  CONSULTA HTTP
-    // ==================================================================
-
-    private fun consultarApi(urlStr: String): String? {
-        return try {
-            val conn = URL(urlStr).openConnection() as HttpURLConnection
-            conn.requestMethod = "GET"
-            conn.connectTimeout = 10_000
-            conn.readTimeout = 10_000
-            conn.setRequestProperty("Accept", "application/json")
-            val code = conn.responseCode
-            if (code != 200) {
-                Log.w(TAG, "API $code: ${urlStr.take(80)}")
-                return null
-            }
-            BufferedReader(InputStreamReader(conn.inputStream)).use { it.readText() }
-        } catch (e: Exception) {
-            Log.w(TAG, "Error HTTP: ${e.message}")
-            null
-        }
-    }
-
-    // ==================================================================
-    //  CÁLCULO DE TIEMPO
-    // ==================================================================
-
-    private fun calcularSegundosRestantes(horaSalida: String): Long? {
-        try {
-            val ahora = Calendar.getInstance()
-            val partes = horaSalida.split(":")
-            if (partes.size < 2) return null
-            val hh = partes[0].replace("\\D".toRegex(), "").toIntOrNull() ?: 0
-            val mm = partes[1].replace("\\D".toRegex(), "").toIntOrNull() ?: 0
-            val ss = if (partes.size >= 3)
-                partes[2].replace("\\D".toRegex(), "").toIntOrNull() ?: 0 else 0
-
-            val salida = Calendar.getInstance().apply {
-                set(Calendar.HOUR_OF_DAY, hh); set(Calendar.MINUTE, mm)
-                set(Calendar.SECOND, ss); set(Calendar.MILLISECOND, 0)
-            }
-            if (salida.timeInMillis <= ahora.timeInMillis)
-                salida.add(Calendar.DAY_OF_MONTH, 1)
-
-            val diff = salida.timeInMillis - ahora.timeInMillis
-            return if (diff <= 0) null else diff / 1000
-        } catch (e: Exception) { return null }
     }
 }
